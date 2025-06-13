@@ -12,8 +12,16 @@ function generateRelativePath(basePath: string, fullPath: string): string {
   return fullPath; // Fallback if basePath is not a prefix
 }
 
+// Counter to make log content slightly different on each call for the same app
+let logSuffixCounter = 0;
+
 export function generateMockFiles(rootPath: string, serverType: 'primary' | 'dr'): FileNode[] {
   const now = new Date();
+  logSuffixCounter++;
+
+  // Randomly decide if settings.json on DR should be "older" or "newer" for variety
+  const drSettingsModifier = Math.random() < 0.5 ? -3600000 : 3600000; // +/- 1 hour
+
   const files: FileNode[] = [
     {
       id: `${serverType}-root-config-${Date.now()}`,
@@ -32,9 +40,13 @@ export function generateMockFiles(rootPath: string, serverType: 'primary' | 'dr'
           type: 'file',
           path: `${rootPath}/config/settings.json`,
           relativePath: 'config/settings.json',
-          content: serverType === 'primary' ? '{"theme": "dark", "feature": true, "version": "1.1"}' : '{"theme": "light", "feature": false, "version": "1.0"}',
+          content: serverType === 'primary'
+            ? `{"theme": "dark", "feature": true, "version": "1.${Math.floor(Math.random()*5) + 1}", "ts": ${now.getTime()}}`
+            : `{"theme": "light", "feature": false, "version": "1.0", "ts": ${now.getTime() + drSettingsModifier}}`,
           status: 'unknown',
-          lastModified: serverType === 'primary' ? now.toISOString() : new Date(now.getTime() - 3600000).toISOString(), // primary is newer
+          lastModified: serverType === 'primary'
+            ? new Date(now.getTime() - Math.random() * 100000).toISOString() // Primary slightly varied
+            : new Date(now.getTime() + drSettingsModifier).toISOString(),
           size: '1KB',
         },
         {
@@ -43,10 +55,10 @@ export function generateMockFiles(rootPath: string, serverType: 'primary' | 'dr'
           type: 'file',
           path: `${rootPath}/config/users.yaml`,
           relativePath: 'config/users.yaml',
-          content: 'users: [userA, userB]', // Same content for simplicity, difference driven by lastModified if any
+          content: serverType === 'primary' ? 'users: [userA, userB, userC]' : 'users: [userA, userB]', // Content difference
           status: 'unknown',
-          lastModified: new Date(now.getTime() - 86400000).toISOString(), // 1 day ago
-          size: '2KB',
+          lastModified: new Date(now.getTime() - 86400000 + (Math.random() * 1000000)).toISOString(), // 1 day ago, with slight variation
+          size: serverType === 'primary' ? '2.1KB' : '2KB',
         },
       ],
     },
@@ -67,31 +79,33 @@ export function generateMockFiles(rootPath: string, serverType: 'primary' | 'dr'
           type: 'file',
           path: `${rootPath}/logs/application.log`,
           relativePath: 'logs/application.log',
-          content: `Log entries for ${serverType}...`,
+          content: `Log entries for ${serverType} (run ${logSuffixCounter})... Entry: ${Math.random().toString(36).substring(7)}`,
           status: 'unknown',
-          lastModified: new Date(now.getTime() - 60000).toISOString(), // 1 min ago
-          size: '5MB',
+          lastModified: new Date(now.getTime() - 60000 + (Math.random() * 30000)).toISOString(), // 1 min ago, varied
+          size: `${(Math.random() * 2 + 4).toFixed(1)}MB`, // Size variation
         },
       ],
     },
-    serverType === 'primary' ? {
+    // Primary-only file might sometimes not exist for variety
+    (serverType === 'primary' && Math.random() > 0.1) ? {
       id: `primary-only-script-sh-${Date.now()}`,
       name: 'deploy.sh',
       type: 'file' as 'file',
       path: `${rootPath}/deploy.sh`,
       relativePath: 'deploy.sh',
-      content: '#!/bin/bash echo "deploying primary..."',
+      content: '#!/bin/bash echo "deploying primary..." # version ' + Math.random(),
       status: 'unknown' as 'unknown',
       lastModified: new Date(now.getTime() - 7200000).toISOString(), // 2 hours ago
       size: '1KB',
     } : null,
-    serverType === 'dr' ? {
+    // DR-only file might sometimes not exist
+    (serverType === 'dr' && Math.random() > 0.2) ? {
       id: `dr-only-readme-md-${Date.now()}`,
       name: 'README_DR.md',
       type: 'file' as 'file',
       path: `${rootPath}/README_DR.md`,
       relativePath: 'README_DR.md',
-      content: '# DR Server Information - This file should be removed after sync.',
+      content: '# DR Server Information - This file should be removed after sync. Random: ' + Math.random(),
       status: 'unknown' as 'unknown',
       lastModified: new Date(now.getTime() - 86400000 * 5).toISOString(), // 5 days ago
       size: '500B',
@@ -102,10 +116,11 @@ export function generateMockFiles(rootPath: string, serverType: 'primary' | 'dr'
       type: 'file',
       path: `${rootPath}/shared_document.txt`,
       relativePath: 'shared_document.txt',
-      content: 'This is a shared document. Initial version.',
+      content: serverType === 'primary' ? 'This is a shared document. Primary version - ' + Date.now() : 'This is a shared document. DR version - ' + (Date.now() - 10000),
       status: 'unknown',
-      lastModified: new Date(now.getTime() - 86400000 * 4).toISOString(), // 4 days ago for both initially
-      size: '700B',
+      // Randomly make one newer than the other
+      lastModified: serverType === 'primary' ? new Date(now.getTime() - 86400000 * (Math.random() > 0.5 ? 3.9 : 4.1)).toISOString() : new Date(now.getTime() - 86400000 * 4).toISOString(),
+      size: serverType === 'primary' ? '705B' : '700B',
     },
   ];
   return files.filter(f => f !== null) as FileNode[];
@@ -127,7 +142,7 @@ function getAllFilesRecursive(nodes: FileNode[]): Map<string, FileNode> {
 export function compareFileTrees(
   primaryRootPath: string,
   drRootPath: string,
-  currentPrimaryFiles: FileNode[], 
+  currentPrimaryFiles: FileNode[],
   currentDrFiles: FileNode[]
 ): {
   updatedPrimaryTree: FileNode[];
@@ -138,7 +153,6 @@ export function compareFileTrees(
   const drMap = getAllFilesRecursive(currentDrFiles);
   const differences: FileDifference[] = [];
 
-  // Deep clone to avoid mutating original state directly during comparison
   const processedPrimaryFiles = JSON.parse(JSON.stringify(currentPrimaryFiles)) as FileNode[];
   const processedDrFiles = JSON.parse(JSON.stringify(currentDrFiles)) as FileNode[];
 
@@ -152,9 +166,6 @@ export function compareFileTrees(
           return true;
         }
         if (node.children && findAndUpdate(node.children)) {
-           // If a child's status changes, the parent directory might implicitly be 'different' or require re-evaluation
-           // For simplicity, we're not cascading status up to parent directories in this basic comparison.
-           // A more advanced system might mark parent dirs if their children differ.
           return true;
         }
       }
@@ -162,7 +173,7 @@ export function compareFileTrees(
     }
     findAndUpdate(tree);
   }
-  
+
   allRelativePaths.forEach(relativePath => {
     const pFile = primaryMap.get(relativePath);
     const dFile = drMap.get(relativePath);
@@ -173,27 +184,39 @@ export function compareFileTrees(
         updateNodeStatusInTree(processedDrFiles, relativePath, 'different');
         differences.push({ path: relativePath, name: pFile.name, status: 'different', primaryFile: pFile, drFile: dFile, summary: `Type mismatch: Primary is ${pFile.type}, DR is ${dFile.type}` });
       } else if (pFile.type === 'file') {
-        const isDifferent = pFile.content !== dFile.content || pFile.lastModified > dFile.lastModified; // Primary is source of truth
+        // Primary is source of truth. Difference if content or primary's lastModified is newer.
+        const primaryTimestamp = new Date(pFile.lastModified).getTime();
+        const drTimestamp = new Date(dFile.lastModified).getTime();
+        const isDifferent = pFile.content !== dFile.content || primaryTimestamp > drTimestamp;
         const status: FileNode['status'] = isDifferent ? 'different' : 'synced';
+
         updateNodeStatusInTree(processedPrimaryFiles, relativePath, status);
         updateNodeStatusInTree(processedDrFiles, relativePath, status);
         if (isDifferent) {
-          differences.push({ path: relativePath, name: pFile.name, status: 'different', primaryFile: pFile, drFile: dFile, summary: 'Content or metadata mismatch (Primary is newer or different)' });
+          let summary = 'Content or metadata mismatch.';
+          if (primaryTimestamp > drTimestamp && pFile.content === dFile.content) summary = 'Primary is newer.';
+          else if (pFile.content !== dFile.content) summary = 'Content differs.';
+          differences.push({ path: relativePath, name: pFile.name, status: 'different', primaryFile: pFile, drFile: dFile, summary });
         }
       } else { // Both are directories
-        updateNodeStatusInTree(processedPrimaryFiles, relativePath, 'synced'); // Assume synced, children will determine real status
-        updateNodeStatusInTree(processedDrFiles, relativePath, 'synced');
+        // Status of directories is implicitly determined by their children.
+        // For this function, mark as 'synced' and let parent logic handle it if needed.
+        // However, explicit diffs are for files/folders that are missing or different.
+        // If a directory structure itself is the "difference" (e.g. one exists, other doesn't), that's handled by primary_only/dr_only.
+        // If both exist, their 'status' is an aggregation of children, or 'synced' if all children sync.
+        // Here we optimistically set to 'synced'; the UI usually cares about actionable diffs.
+         updateNodeStatusInTree(processedPrimaryFiles, relativePath, 'synced');
+         updateNodeStatusInTree(processedDrFiles, relativePath, 'synced');
       }
     } else if (pFile) {
       updateNodeStatusInTree(processedPrimaryFiles, relativePath, 'primary_only');
       differences.push({ path: relativePath, name: pFile.name, status: 'primary_only', primaryFile: pFile, summary: 'File exists only on Primary' });
     } else if (dFile) {
-      // This file existing only on DR means DR is "different" from primary's state for this path
-      updateNodeStatusInTree(processedDrFiles, relativePath, 'dr_only'); 
+      updateNodeStatusInTree(processedDrFiles, relativePath, 'dr_only');
       differences.push({ path: relativePath, name: dFile.name, status: 'dr_only', drFile: dFile, summary: 'File exists only on DR' });
     }
   });
-  
+
   return { updatedPrimaryTree: processedPrimaryFiles, updatedDrTree: processedDrFiles, differences };
 }
 
@@ -203,21 +226,22 @@ export function addNodeToTree(tree: FileNode[], basePath: string, nodeToAdd: Fil
   const newTree = JSON.parse(JSON.stringify(tree)) as FileNode[];
   const pathParts = nodeToAdd.relativePath.split('/');
   let currentLevel = newTree;
-  let currentPath = basePath;
+  let currentPath = basePath; // This should be the root path of the DR tree, e.g., "/srv/backup/data"
 
   for (let i = 0; i < pathParts.length - 1; i++) {
     const part = pathParts[i];
-    currentPath = `${currentPath}/${part}`;
+    // Construct the full path for the current directory part relative to the DR server's root
+    currentPath = `${currentPath}/${part}`.replace(/\/\//g, '/');
     let dirNode = currentLevel.find(n => n.name === part && n.type === 'directory');
     if (!dirNode) {
       dirNode = {
-        id: `dr-created-${part}-${Date.now()}`,
+        id: `dr-created-dir-${part}-${Date.now()}`,
         name: part,
         type: 'directory',
-        path: currentPath,
-        relativePath: generateRelativePath(basePath, currentPath),
-        status: 'synced', // Assuming it's created as synced
-        lastModified: new Date().toISOString(),
+        path: currentPath, // Full path on DR
+        relativePath: generateRelativePath(basePath, currentPath), // Path relative to DR's rootPath
+        status: 'synced',
+        lastModified: nodeToAdd.lastModified, // Use source node's timestamp if creating parent
         size: '0KB',
         children: [],
         isOpen: true,
@@ -227,14 +251,30 @@ export function addNodeToTree(tree: FileNode[], basePath: string, nodeToAdd: Fil
     currentLevel = dirNode.children!;
   }
 
-  const finalNode = {
-    ...nodeToAdd,
-    id: `dr-copied-${nodeToAdd.name}-${Date.now()}`,
-    path: `${basePath}/${nodeToAdd.relativePath}`.replace(/\/\//g, '/'),
-    status: 'synced' as 'synced',
-    // Ensure children are also new instances if it's a directory
-    children: nodeToAdd.children ? JSON.parse(JSON.stringify(nodeToAdd.children)) : undefined,
-  };
+  // The node to be added (file or directory)
+  const finalNode = JSON.parse(JSON.stringify(nodeToAdd)); // Deep clone source node
+  finalNode.id = `dr-copied-node-${nodeToAdd.name}-${Date.now()}`;
+  finalNode.path = `${basePath}/${nodeToAdd.relativePath}`.replace(/\/\//g, '/'); // Correct full path on DR
+  finalNode.relativePath = nodeToAdd.relativePath; // Relative path remains same as source
+  finalNode.status = 'synced';
+  // If it's a directory, ensure its children also have updated paths and new IDs
+  if (finalNode.type === 'directory' && finalNode.children) {
+    finalNode.children = finalNode.children.map((child: FileNode) => {
+        const newChild = JSON.parse(JSON.stringify(child));
+        newChild.id = `dr-copied-child-${child.name}-${Date.now()}`;
+        newChild.path = `${finalNode.path}/${child.name}`.replace(/\/\//g, '/');
+        newChild.relativePath = `${finalNode.relativePath}/${child.name}`.replace(/\/\//g, '/');
+        newChild.status = 'synced';
+        // Recursively update grand-children if any (though mock data is not that deep)
+        if (newChild.children) {
+            // This part would need a recursive function if directory structures are very deep.
+            // For simplicity, assuming only one level of children for now in this specific copy.
+        }
+        return newChild;
+    });
+  }
+
+
   currentLevel.push(finalNode);
   return newTree;
 }
@@ -260,15 +300,26 @@ export function updateNodeInTree(tree: FileNode[], relativePathToUpdate: string,
   function findAndUpdateRecursive(nodes: FileNode[]): FileNode[] {
     return nodes.map(node => {
       if (node.relativePath === relativePathToUpdate) {
-        return {
+        // Create a new object for the updated node
+        const updatedNode = {
           ...node, // Keep DR id and path structure
-          content: sourceNode.content,
-          lastModified: sourceNode.lastModified,
-          size: sourceNode.size,
-          status: 'synced' as 'synced',
-          // If it's a directory, its children would be handled by individual file diffs
-          // For this mock, we assume file properties are what's updated.
+          content: sourceNode.content, // Update content from source
+          lastModified: sourceNode.lastModified, // Update lastModified from source
+          size: sourceNode.size, // Update size from source
+          status: 'synced' as 'synced', // Mark as synced
         };
+        // If the source node is a directory and has children, we should ensure the DR node also reflects this structure.
+        // This mock sync is primarily file-content focused for 'different'.
+        // A full directory content sync would be more complex.
+        if (sourceNode.type === 'directory') {
+            // For a 'different' directory, the sync action would typically involve syncing its children.
+            // Here, we are just updating metadata and content for a 'file'.
+            // If it's a directory, and its 'different' status is due to metadata or children not covered by other diffs,
+            // this simple update might not be enough. True directory sync is more involved.
+            // For now, if it's a directory, its children are handled by their own diffs (primary_only, dr_only, different).
+            // So, we primarily update metadata if sourceNode itself is a directory.
+        }
+        return updatedNode;
       }
       if (node.children) {
         return { ...node, children: findAndUpdateRecursive(node.children) };
@@ -278,3 +329,4 @@ export function updateNodeInTree(tree: FileNode[], relativePathToUpdate: string,
   }
   return findAndUpdateRecursive(JSON.parse(JSON.stringify(tree)));
 }
+
