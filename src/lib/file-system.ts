@@ -8,9 +8,24 @@ import type { FileNode, FileDifference } from '@/types';
 
 function getAllFilesRecursive(nodes: FileNode[]): Map<string, FileNode> {
   const map = new Map<string, FileNode>();
+  if (!Array.isArray(nodes)) { // Ensure nodes is an array
+    // console.warn("getAllFilesRecursive received non-array nodes:", nodes);
+    return map;
+  }
+
   for (const node of nodes) {
+    if (typeof node !== 'object' || node === null) {
+      // console.warn("getAllFilesRecursive skipping non-object node:", node);
+      continue;
+    }
+    // Ensure essential properties exist before using them
+    if (typeof node.relativePath !== 'string' || typeof node.type !== 'string') {
+        // console.warn("getAllFilesRecursive skipping node with missing properties:", node);
+        continue;
+    }
+
     map.set(node.relativePath, node);
-    if (node.type === 'directory' && node.children) {
+    if (node.type === 'directory' && Array.isArray(node.children)) {
       const childrenMap = getAllFilesRecursive(node.children);
       childrenMap.forEach((value, key) => map.set(key, value));
     }
@@ -33,19 +48,35 @@ export function compareFileTrees(
   const differences: FileDifference[] = [];
 
   // Deep clone to avoid mutating original state directly during status updates
-  const processedPrimaryFiles = JSON.parse(JSON.stringify(currentPrimaryFiles)) as FileNode[];
-  const processedDrFiles = JSON.parse(JSON.stringify(currentDrFiles)) as FileNode[];
+  // Ensure inputs are arrays before stringifying
+  const safeCurrentPrimaryFiles = Array.isArray(currentPrimaryFiles) ? currentPrimaryFiles : [];
+  const safeCurrentDrFiles = Array.isArray(currentDrFiles) ? currentDrFiles : [];
+
+  const processedPrimaryFiles = JSON.parse(JSON.stringify(safeCurrentPrimaryFiles)) as FileNode[];
+  const processedDrFiles = JSON.parse(JSON.stringify(safeCurrentDrFiles)) as FileNode[];
 
   const allRelativePaths = new Set([...primaryMap.keys(), ...drMap.keys()]);
 
   function updateNodeStatusInTree(tree: FileNode[], relativePath: string, status: FileNode['status']) {
     function findAndUpdate(nodes: FileNode[]): boolean {
+      if (!Array.isArray(nodes)) return false; // Ensure nodes is an array
+
       for (let node of nodes) {
+        if (typeof node !== 'object' || node === null) {
+          // console.warn("findAndUpdate skipping non-object node:", node);
+          continue; // Skip if node is not an object
+        }
+        // Ensure essential properties exist
+        if (typeof node.relativePath !== 'string') {
+            // console.warn("findAndUpdate skipping node with missing relativePath:", node);
+            continue;
+        }
+
         if (node.relativePath === relativePath) {
           node.status = status;
           return true;
         }
-        if (node.children && findAndUpdate(node.children)) {
+        if (node.children && Array.isArray(node.children) && findAndUpdate(node.children)) {
           // If a child's status changes, the parent directory might implicitly be 'different'
           // but we mark the specific file/dir that's different.
           return true;
@@ -113,3 +144,4 @@ export function compareFileTrees(
 // export function addNodeToTree(...) { ... }
 // export function removeNodeFromTree(...) { ... }
 // export function updateNodeInTree(...) { ... }
+
