@@ -10,7 +10,8 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { AppWindow, PlusCircle, PlayCircle, Settings2, Save } from 'lucide-react'; // Changed Download to Save
+import { AppWindow, PlusCircle, PlayCircle, Settings2, Save } from 'lucide-react';
+import { useToast } from "@/hooks/use-toast";
 
 interface ApplicationSetupProps {
   assignedPrimaryServers: AssignedServer[];
@@ -18,7 +19,7 @@ interface ApplicationSetupProps {
   existingApplications: Application[];
   onAddApplication: (app: Application) => void;
   onStartSync: (app: Application) => void;
-  onSaveConfiguration: () => void; // Changed from onDownloadConfiguration
+  onSaveConfiguration: () => void;
   isSavingConfiguration: boolean;
 }
 
@@ -36,40 +37,35 @@ const ApplicationSetup: React.FC<ApplicationSetupProps> = ({
   const [appDrPath, setAppDrPath] = useState<string>('/srv/backup/data');
   const [selectedPrimaryIds, setSelectedPrimaryIds] = useState<string[]>([]);
   const [selectedDrIds, setSelectedDrIds] = useState<string[]>([]);
+  const { toast } = useToast();
 
   const handleAddApp = (e: React.FormEvent) => {
     e.preventDefault();
     if (!appName.trim() || !appPrimaryPath.trim() || !appDrPath.trim() || selectedPrimaryIds.length === 0 || selectedDrIds.length === 0) {
-      alert('Please fill all fields and select at least one primary and one DR server that is reachable.');
+      toast({
+        title: "Missing Information",
+        description: "Please fill all application fields and select at least one primary and one DR server.",
+        variant: "destructive",
+      });
       return;
-    }
-    // Filter out any selected servers that are not reachable
-    const reachableSelectedPrimaryIds = selectedPrimaryIds.filter(id => {
-        const server = assignedPrimaryServers.find(s => s.id === id);
-        return server && server.isReachable;
-    });
-    const reachableSelectedDrIds = selectedDrIds.filter(id => {
-        const server = assignedDrServers.find(s => s.id === id);
-        return server && server.isReachable;
-    });
-
-    if (reachableSelectedPrimaryIds.length === 0 || reachableSelectedDrIds.length === 0) {
-        alert('Selected servers must be reachable to be assigned to an application.');
-        return;
     }
 
     const newApp: Application = {
       id: `app_${Date.now()}_${appName.trim().replace(/\s+/g, '_')}`,
       name: appName.trim(),
-      primaryServerIds: reachableSelectedPrimaryIds,
-      drServerIds: reachableSelectedDrIds,
+      primaryServerIds: selectedPrimaryIds, // Use all selected, regardless of reachability
+      drServerIds: selectedDrIds,     // Use all selected, regardless of reachability
       primaryPath: appPrimaryPath.trim(),
       drPath: appDrPath.trim(),
     };
     onAddApplication(newApp);
     setAppName('');
+    // Optionally reset paths if desired, or keep them for next entry
+    // setAppPrimaryPath('/opt/app/data'); 
+    // setAppDrPath('/srv/backup/data');
     setSelectedPrimaryIds([]);
     setSelectedDrIds([]);
+    toast({ title: "Application Added", description: `${newApp.name} has been configured.` });
   };
 
   const toggleSelection = (id: string, type: 'primary' | 'dr') => {
@@ -84,12 +80,20 @@ const ApplicationSetup: React.FC<ApplicationSetupProps> = ({
     }
   };
 
-  const getReachableStatus = (server: AssignedServer) => {
+  const getReachableStatusText = (server: AssignedServer) => {
     if (server.isCheckingReachability) return "(checking...)";
     if (server.isReachable === true) return "(reachable)";
     if (server.isReachable === false) return "(unreachable)";
     return "(status unknown)";
   };
+
+  const getReachabilityClass = (server: AssignedServer) => {
+    if (server.isCheckingReachability) return "text-yellow-600";
+    if (server.isReachable === true) return "text-green-600";
+    if (server.isReachable === false) return "text-red-600";
+    return "text-muted-foreground";
+  };
+
 
   return (
     <div className="space-y-8">
@@ -100,7 +104,7 @@ const ApplicationSetup: React.FC<ApplicationSetupProps> = ({
                 <CardTitle className="font-headline text-2xl">Step 3: Configure Applications</CardTitle>
             </div>
           <CardDescription>
-            Define your applications, assign servers, and specify paths. You can also save the current system configuration to the server.
+            Define your applications, assign servers, and specify paths. Reachability is shown for information. You can also save the current system configuration to the server.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -123,38 +127,38 @@ const ApplicationSetup: React.FC<ApplicationSetupProps> = ({
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
-                <h4 className="font-semibold mb-2 text-foreground">Assign Primary Servers (Reachable Only)</h4>
+                <h4 className="font-semibold mb-2 text-foreground">Assign Primary Servers</h4>
                 <ScrollArea className="h-48 border rounded-md p-3 bg-muted/20">
-                  {assignedPrimaryServers.filter(s => s.isReachable).length === 0 && <p className="text-sm text-muted-foreground">No reachable primary servers available.</p>}
+                  {assignedPrimaryServers.length === 0 && <p className="text-sm text-muted-foreground">No primary servers assigned in Step 2.</p>}
                   {assignedPrimaryServers.map(server => (
                     <div key={server.id} className="flex items-center space-x-2 mb-2 p-2 rounded hover:bg-accent/10">
                       <Checkbox
                         id={`app-primary-${server.id}`}
                         checked={selectedPrimaryIds.includes(server.id)}
                         onCheckedChange={() => toggleSelection(server.id, 'primary')}
-                        disabled={!server.isReachable || server.isCheckingReachability}
+                        disabled={server.isCheckingReachability} // Only disable if actively checking
                       />
-                      <Label htmlFor={`app-primary-${server.id}`} className={`flex-grow cursor-pointer ${!server.isReachable || server.isCheckingReachability ? 'text-muted-foreground line-through' : ''}`}>
-                        {server.name} <span className="text-xs">{getReachableStatus(server)}</span>
+                      <Label htmlFor={`app-primary-${server.id}`} className={`flex-grow cursor-pointer ${server.isCheckingReachability ? 'text-muted-foreground' : ''}`}>
+                        {server.name} <span className={`text-xs ${getReachabilityClass(server)}`}>{getReachableStatusText(server)}</span>
                       </Label>
                     </div>
                   ))}
                 </ScrollArea>
               </div>
               <div>
-                <h4 className="font-semibold mb-2 text-foreground">Assign DR Servers (Reachable Only)</h4>
+                <h4 className="font-semibold mb-2 text-foreground">Assign DR Servers</h4>
                  <ScrollArea className="h-48 border rounded-md p-3 bg-muted/20">
-                  {assignedDrServers.filter(s => s.isReachable).length === 0 && <p className="text-sm text-muted-foreground">No reachable DR servers available.</p>}
+                  {assignedDrServers.length === 0 && <p className="text-sm text-muted-foreground">No DR servers assigned in Step 2.</p>}
                   {assignedDrServers.map(server => (
                     <div key={server.id} className="flex items-center space-x-2 mb-2 p-2 rounded hover:bg-accent/10">
                       <Checkbox
                         id={`app-dr-${server.id}`}
                         checked={selectedDrIds.includes(server.id)}
                         onCheckedChange={() => toggleSelection(server.id, 'dr')}
-                        disabled={!server.isReachable || server.isCheckingReachability}
+                        disabled={server.isCheckingReachability} // Only disable if actively checking
                       />
-                      <Label htmlFor={`app-dr-${server.id}`} className={`flex-grow cursor-pointer ${!server.isReachable || server.isCheckingReachability ? 'text-muted-foreground line-through' : ''}`}>
-                        {server.name} <span className="text-xs">{getReachableStatus(server)}</span>
+                      <Label htmlFor={`app-dr-${server.id}`} className={`flex-grow cursor-pointer ${server.isCheckingReachability ? 'text-muted-foreground' : ''}`}>
+                        {server.name} <span className={`text-xs ${getReachabilityClass(server)}`}>{getReachableStatusText(server)}</span>
                       </Label>
                     </div>
                   ))}
@@ -194,12 +198,12 @@ const ApplicationSetup: React.FC<ApplicationSetupProps> = ({
                         <summary className="cursor-pointer text-muted-foreground hover:text-foreground">Show Assigned Servers ({app.primaryServerIds.length} Primary, {app.drServerIds.length} DR)</summary>
                         <div className="pl-4 pt-1">
                             <p><strong>Primary:</strong> {app.primaryServerIds.map(id => {
-                                const server = assignedPrimaryServers.find(s=>s.id===id) || assignedDrServers.find(s=>s.id===id); // Check both lists just in case
-                                return `${server?.name || 'Unknown'} ${server ? getReachableStatus(server) : ''}`;
+                                const server = assignedPrimaryServers.find(s=>s.id===id);
+                                return `${server?.name || 'Unknown'} ${server ? <span className={getReachabilityClass(server)}>{getReachableStatusText(server)}</span> : ''}`;
                             }).join(', ')}</p>
                             <p><strong>DR:</strong> {app.drServerIds.map(id => {
-                                const server = assignedDrServers.find(s=>s.id===id) || assignedPrimaryServers.find(s=>s.id===id);
-                                return `${server?.name || 'Unknown'} ${server ? getReachableStatus(server) : ''}`;
+                                const server = assignedDrServers.find(s=>s.id===id);
+                                return `${server?.name || 'Unknown'} ${server ? <span className={getReachabilityClass(server)}>{getReachableStatusText(server)}</span> : ''}`;
                             }).join(', ')}</p>
                         </div>
                       </details>
