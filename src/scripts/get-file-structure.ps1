@@ -68,7 +68,9 @@ foreach ($item in $items) {
     }
 
     if ($item.PSIsContainer) {
-        $node.children = (& $PSCommandPath -RootPath $item.FullName -RelativePathBase $currentRelativePath)
+        $childrenJsonString = (& $PSCommandPath -RootPath $item.FullName -RelativePathBase $currentRelativePath)
+        # Parse the JSON string into a PowerShell object (array)
+        $node.children = $childrenJsonString | ConvertFrom-Json
     }
     $output += $node
 }
