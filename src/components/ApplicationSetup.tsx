@@ -10,7 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { AppWindow, PlusCircle, PlayCircle, Settings2 } from 'lucide-react';
+import { AppWindow, PlusCircle, PlayCircle, Settings2, Download } from 'lucide-react';
 
 interface ApplicationSetupProps {
   assignedPrimaryServers: AssignedServer[];
@@ -18,6 +18,7 @@ interface ApplicationSetupProps {
   existingApplications: Application[];
   onAddApplication: (app: Application) => void;
   onStartSync: (app: Application) => void;
+  onDownloadConfiguration: () => void;
 }
 
 const ApplicationSetup: React.FC<ApplicationSetupProps> = ({
@@ -26,6 +27,7 @@ const ApplicationSetup: React.FC<ApplicationSetupProps> = ({
   existingApplications,
   onAddApplication,
   onStartSync,
+  onDownloadConfiguration,
 }) => {
   const [appName, setAppName] = useState<string>('');
   const [appPrimaryPath, setAppPrimaryPath] = useState<string>('/opt/app/data');
@@ -40,7 +42,7 @@ const ApplicationSetup: React.FC<ApplicationSetupProps> = ({
       return;
     }
     const newApp: Application = {
-      id: `app_${Date.now()}_${appName.trim()}`,
+      id: `app_${Date.now()}_${appName.trim().replace(/\s+/g, '_')}`,
       name: appName.trim(),
       primaryServerIds: selectedPrimaryIds,
       drServerIds: selectedDrIds,
@@ -49,8 +51,9 @@ const ApplicationSetup: React.FC<ApplicationSetupProps> = ({
     };
     onAddApplication(newApp);
     setAppName('');
-    setAppPrimaryPath('/opt/app/data');
-    setAppDrPath('/srv/backup/data');
+    // Reset paths to default or clear them as per desired UX
+    // setAppPrimaryPath('/opt/app/data'); 
+    // setAppDrPath('/srv/backup/data');
     setSelectedPrimaryIds([]);
     setSelectedDrIds([]);
   };
@@ -67,6 +70,13 @@ const ApplicationSetup: React.FC<ApplicationSetupProps> = ({
     }
   };
 
+  const getReachableStatus = (server: AssignedServer) => {
+    if (server.isCheckingReachability) return "(checking...)";
+    if (server.isReachable === true) return "(reachable)";
+    if (server.isReachable === false) return "(unreachable)";
+    return "(status unknown)";
+  };
+
   return (
     <div className="space-y-8">
       <Card className="shadow-lg">
@@ -76,7 +86,7 @@ const ApplicationSetup: React.FC<ApplicationSetupProps> = ({
                 <CardTitle className="font-headline text-2xl">Step 3: Configure Applications</CardTitle>
             </div>
           <CardDescription>
-            Define your applications by naming them, specifying their primary and DR paths, and assigning the servers you configured in the previous step.
+            Define your applications by naming them, specifying their primary and DR paths, and assigning the servers. You can also download the current system configuration.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -105,11 +115,14 @@ const ApplicationSetup: React.FC<ApplicationSetupProps> = ({
                   {assignedPrimaryServers.map(server => (
                     <div key={server.id} className="flex items-center space-x-2 mb-2 p-2 rounded hover:bg-accent/10">
                       <Checkbox
-                        id={`primary-${server.id}`}
+                        id={`app-primary-${server.id}`}
                         checked={selectedPrimaryIds.includes(server.id)}
                         onCheckedChange={() => toggleSelection(server.id, 'primary')}
+                        disabled={server.isReachable === false || server.isCheckingReachability}
                       />
-                      <Label htmlFor={`primary-${server.id}`} className="flex-grow cursor-pointer">{server.name}</Label>
+                      <Label htmlFor={`app-primary-${server.id}`} className={`flex-grow cursor-pointer ${server.isReachable === false || server.isCheckingReachability ? 'text-muted-foreground line-through' : ''}`}>
+                        {server.name} <span className="text-xs">{getReachableStatus(server)}</span>
+                      </Label>
                     </div>
                   ))}
                 </ScrollArea>
@@ -121,11 +134,14 @@ const ApplicationSetup: React.FC<ApplicationSetupProps> = ({
                   {assignedDrServers.map(server => (
                     <div key={server.id} className="flex items-center space-x-2 mb-2 p-2 rounded hover:bg-accent/10">
                       <Checkbox
-                        id={`dr-${server.id}`}
+                        id={`app-dr-${server.id}`}
                         checked={selectedDrIds.includes(server.id)}
                         onCheckedChange={() => toggleSelection(server.id, 'dr')}
+                        disabled={server.isReachable === false || server.isCheckingReachability}
                       />
-                      <Label htmlFor={`dr-${server.id}`} className="flex-grow cursor-pointer">{server.name}</Label>
+                      <Label htmlFor={`app-dr-${server.id}`} className={`flex-grow cursor-pointer ${server.isReachable === false || server.isCheckingReachability ? 'text-muted-foreground line-through' : ''}`}>
+                        {server.name} <span className="text-xs">{getReachableStatus(server)}</span>
+                      </Label>
                     </div>
                   ))}
                 </ScrollArea>
@@ -136,6 +152,11 @@ const ApplicationSetup: React.FC<ApplicationSetupProps> = ({
             </Button>
           </form>
         </CardContent>
+        <CardFooter className="border-t pt-4">
+            <Button onClick={onDownloadConfiguration} variant="outline">
+                <Download className="mr-2 h-4 w-4" /> Download System Configuration
+            </Button>
+        </CardFooter>
       </Card>
 
       {existingApplications.length > 0 && (
@@ -158,8 +179,14 @@ const ApplicationSetup: React.FC<ApplicationSetupProps> = ({
                       <details className="text-xs mt-1">
                         <summary className="cursor-pointer text-muted-foreground hover:text-foreground">Show Assigned Servers ({app.primaryServerIds.length} Primary, {app.drServerIds.length} DR)</summary>
                         <div className="pl-4 pt-1">
-                            <p><strong>Primary:</strong> {app.primaryServerIds.map(id => assignedPrimaryServers.find(s=>s.id===id)?.name || 'Unknown').join(', ')}</p>
-                            <p><strong>DR:</strong> {app.drServerIds.map(id => assignedDrServers.find(s=>s.id===id)?.name || 'Unknown').join(', ')}</p>
+                            <p><strong>Primary:</strong> {app.primaryServerIds.map(id => {
+                                const server = assignedPrimaryServers.find(s=>s.id===id);
+                                return `${server?.name || 'Unknown'} ${server ? getReachableStatus(server) : ''}`;
+                            }).join(', ')}</p>
+                            <p><strong>DR:</strong> {app.drServerIds.map(id => {
+                                const server = assignedDrServers.find(s=>s.id===id);
+                                return `${server?.name || 'Unknown'} ${server ? getReachableStatus(server) : ''}`;
+                            }).join(', ')}</p>
                         </div>
                       </details>
                     </div>

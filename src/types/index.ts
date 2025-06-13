@@ -44,6 +44,8 @@ export interface AssignedServer {
   id: string; // Unique ID for the assigned server instance, e.g., "assigned_guid"
   name: string;
   originalRawServerId: string; // ID of the RawServer it came from
+  isReachable?: boolean | null; // null for unchecked, true for reachable, false for not
+  isCheckingReachability?: boolean;
 }
 
 export interface Application {
@@ -53,4 +55,13 @@ export interface Application {
   drServerIds: string[];     // List of AssignedServer IDs
   primaryPath: string;       // Path for primary servers for this application
   drPath: string;            // Path for DR servers for this application
+}
+
+export interface AppConfigurationBundle {
+  rawPrimaryServers: RawServer[];
+  rawDrServers: RawServer[];
+  assignedPrimaryServers: AssignedServer[];
+  assignedDrServers: AssignedServer[];
+  applications: Application[];
+  version: string; // To handle future schema changes
 }

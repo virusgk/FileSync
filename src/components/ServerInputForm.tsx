@@ -2,27 +2,44 @@
 'use client';
 
 import type * as React from 'react';
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
-import { ListPlus } from 'lucide-react';
+import { ListPlus, Upload } from 'lucide-react';
 
 interface ServerInputFormProps {
   onSubmit: (primaryNames: string[], drNames: string[]) => void;
+  onFileUpload: (file: File) => void;
 }
 
-const ServerInputForm: React.FC<ServerInputFormProps> = ({ onSubmit }) => {
+const ServerInputForm: React.FC<ServerInputFormProps> = ({ onSubmit, onFileUpload }) => {
   const [primaryServerNames, setPrimaryServerNames] = useState<string>('');
   const [drServerNames, setDrServerNames] = useState<string>('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const primary = primaryServerNames.split(',').map(s => s.trim()).filter(s => s);
     const dr = drServerNames.split(',').map(s => s.trim()).filter(s => s);
+    if (primary.length === 0 && dr.length === 0) {
+        alert("Please enter at least one server name for Primary or DR, or upload a configuration.");
+        return;
+    }
     onSubmit(primary, dr);
+  };
+
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      onFileUpload(file);
+    }
+  };
+
+  const triggerFileDialog = () => {
+    fileInputRef.current?.click();
   };
 
   return (
@@ -30,10 +47,10 @@ const ServerInputForm: React.FC<ServerInputFormProps> = ({ onSubmit }) => {
       <CardHeader>
         <div className="flex items-center gap-2">
             <ListPlus className="h-8 w-8 text-primary" />
-            <CardTitle className="font-headline text-2xl">Step 1: Enter Server Names</CardTitle>
+            <CardTitle className="font-headline text-2xl">Step 1: Enter Server Names or Load Configuration</CardTitle>
         </div>
         <CardDescription>
-          Provide comma-separated lists of your primary and DR server names. These names will be used in the next step for assignment.
+          Provide comma-separated lists of your primary and DR server names, or upload an existing configuration file.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -71,6 +88,22 @@ const ServerInputForm: React.FC<ServerInputFormProps> = ({ onSubmit }) => {
           </Button>
         </form>
       </CardContent>
+      <CardFooter className="flex-col items-start space-y-2 pt-4 border-t">
+        <Label className="text-md font-medium">Load Configuration</Label>
+        <p className="text-sm text-muted-foreground">
+          If you have a saved configuration JSON file, you can upload it here.
+        </p>
+        <Input 
+            type="file" 
+            accept=".json" 
+            onChange={handleFileChange} 
+            className="hidden" 
+            ref={fileInputRef} 
+        />
+        <Button onClick={triggerFileDialog} variant="outline">
+            <Upload className="mr-2 h-4 w-4" /> Upload Configuration File
+        </Button>
+      </CardFooter>
     </Card>
   );
 };
