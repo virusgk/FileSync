@@ -55,6 +55,21 @@
       "isCheckingReachability": false
     }
   ],
-  "applications": [],
+  "applications": [
+    {
+      "id": "app_1749803746225_IntelHub",
+      "name": "IntelHub",
+      "primaryServerIds": [
+        "raw_primary_0_PR001",
+        "raw_primary_1_PR002"
+      ],
+      "drServerIds": [
+        "raw_dr_0_DR001",
+        "raw_dr_1_DR002"
+      ],
+      "primaryPath": "/opt/app/data",
+      "drPath": "/srv/backup/data"
+    }
+  ],
   "version": "1.0"
 }

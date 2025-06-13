@@ -14,12 +14,23 @@ import SyncLogDialog from '@/components/SyncLogDialog';
 import ServerInputForm from '@/components/ServerInputForm';
 import ServerAssignment from '@/components/ServerAssignment';
 import ApplicationSetup from '@/components/ApplicationSetup';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+
 
 import { generateMockFiles, compareFileTrees, addNodeToTree, removeNodeFromTree, updateNodeInTree } from '@/lib/file-system';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Loader2 } from 'lucide-react';
 
 const CONFIG_VERSION = "1.0";
 
@@ -65,6 +76,15 @@ export default function FileSyncPage() {
   const [isGlobalLoading, setIsGlobalLoading] = useState<boolean>(false);
   const [isSyncingFile, setIsSyncingFile] = useState<boolean>(false);
   const [isSyncingAll, setIsSyncingAll] = useState<boolean>(false);
+
+  // State for pre-sync confirmation
+  const [syncConfirmationDetails, setSyncConfirmationDetails] = useState<{
+    toAdd: number;
+    toUpdate: number;
+    toRemove: number;
+  } | null>(null);
+  const [isSyncConfirmDialogOpen, setIsSyncConfirmDialogOpen] = useState(false);
+
 
   const { toast } = useToast();
 
@@ -524,7 +544,7 @@ export default function FileSyncPage() {
   }, [primaryFiles, drFiles, primaryPath, drPath, selectedApplicationForSync, toast]);
 
 
-  const handleSyncAllDifferent = useCallback(async () => {
+  const executeConfirmedSyncAll = useCallback(async () => {
     if (!selectedApplicationForSync) return;
     setIsSyncingAll(true);
     addLogEntry(`Starting sync for all differing items (Primary to DR) for ${selectedApplicationForSync.name}...`, 'info');
@@ -532,14 +552,15 @@ export default function FileSyncPage() {
     let currentPrimary = JSON.parse(JSON.stringify(primaryFiles));
     let currentDr = JSON.parse(JSON.stringify(drFiles));
     
-    // Get all differences that require action (Primary to DR)
     const diffsToProcess = differences.filter(d => d.status === 'different' || d.status === 'primary_only' || d.status === 'dr_only');
+    let itemsProcessedCount = 0;
 
     for (const diff of diffsToProcess) {
-      const { newPrimaryFiles, newDrFiles } = await simulateSync(diff); // simulateSync handles one-way logic
-      currentPrimary = newPrimaryFiles; // Primary tree might get status updates
-      currentDr = newDrFiles;     // DR tree gets content/structure updates
-      await new Promise(resolve => setTimeout(resolve, 100)); // Small delay between operations
+      const { newPrimaryFiles, newDrFiles } = await simulateSync(diff); 
+      currentPrimary = newPrimaryFiles; 
+      currentDr = newDrFiles;     
+      itemsProcessedCount++;
+      await new Promise(resolve => setTimeout(resolve, 100)); 
     }
     
     const { updatedPrimaryTree, updatedDrTree, differences: finalDifferences } = compareFileTrees(primaryPath, drPath, currentPrimary, currentDr);
@@ -547,18 +568,42 @@ export default function FileSyncPage() {
     setDrFiles(updatedDrTree);
     setDifferences(finalDifferences);
 
-    setSelectedDifference(null); // Clear selection as batch operation completed
+    setSelectedDifference(null); 
 
-    addLogEntry(`Sync all operation completed for ${selectedApplicationForSync.name}. ${diffsToProcess.length} items processed.`, 'success');
-    toast({ title: "Sync All Complete", description: `${diffsToProcess.length} items processed for ${selectedApplicationForSync.name}.` });
+    addLogEntry(`Sync all operation completed for ${selectedApplicationForSync.name}. ${itemsProcessedCount} items processed.`, 'success');
+    toast({ title: "Sync All Complete", description: `${itemsProcessedCount} items processed for ${selectedApplicationForSync.name}.` });
     setIsSyncingAll(false);
+    setIsSyncConfirmDialogOpen(false);
+    setSyncConfirmationDetails(null);
   }, [differences, toast, selectedApplicationForSync, primaryFiles, drFiles, primaryPath, drPath]); 
+
+
+  const handleSyncAllDifferent = useCallback(async () => {
+    if (!selectedApplicationForSync || differences.length === 0) return;
+
+    let toAdd = 0;
+    let toUpdate = 0;
+    let toRemove = 0;
+
+    differences.forEach(diff => {
+      if (diff.status === 'primary_only') toAdd++;
+      else if (diff.status === 'different') toUpdate++;
+      else if (diff.status === 'dr_only') toRemove++;
+    });
+
+    if (toAdd === 0 && toUpdate === 0 && toRemove === 0) {
+      toast({ title: "No Changes", description: "All files are already in sync or no actionable differences found." });
+      return;
+    }
+
+    setSyncConfirmationDetails({ toAdd, toUpdate, toRemove });
+    setIsSyncConfirmDialogOpen(true);
+    // The actual sync is now triggered by `executeConfirmedSyncAll`
+  }, [differences, selectedApplicationForSync, toast]);
   
   const selectedFilePathForExplorer = useMemo(() => {
     if (selectedDifference?.primaryFile) return selectedDifference.primaryFile.path;
     if (selectedDifference?.drFile) return selectedDifference.drFile.path;
-    // If a difference is selected but files aren't directly on it (e.g. directory diff)
-    // try to construct the path based on selectedDifference.path
     if (selectedDifference?.path && selectedApplicationForSync) {
         const pNode = findNodeByPathRecursive(primaryFiles, `${selectedApplicationForSync.primaryPath}/${selectedDifference.path}`.replace(/\/\//g, '/'));
         if (pNode) return pNode.path;
@@ -635,12 +680,12 @@ export default function FileSyncPage() {
                   <p>Primary Server Path: <code className="font-code bg-muted p-1 rounded">{selectedApplicationForSync.primaryPath}</code> (Source)</p>
                   <p>DR Server Path: <code className="font-code bg-muted p-1 rounded">{selectedApplicationForSync.drPath}</code> (Target)</p>
                    <Button onClick={handleLoadFiles} disabled={isGlobalLoading} variant="default" size="sm" className="mt-2">
+                    {isGlobalLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                     {isGlobalLoading ? 'Loading Files...' : 'Reload Files for This App'}
                   </Button>
                 </CardContent>
               </Card>
 
-              {/* Only show file explorers and details if not initial global loading */}
               { (primaryFiles.length > 0 || drFiles.length > 0 || isGlobalLoading) && (
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
                   <FileExplorer
@@ -670,7 +715,6 @@ export default function FileSyncPage() {
                 </div>
               )}
               
-              {/* Sync controls should be visible if there are differences and not globally loading */}
               {differences.length > 0 && !isGlobalLoading && (
                 <SyncControls
                   onSyncAllDifferent={handleSyncAllDifferent} 
@@ -688,6 +732,31 @@ export default function FileSyncPage() {
         onOpenChange={setIsSyncLogOpen}
         logs={syncLog}
       />
+      {isSyncConfirmDialogOpen && syncConfirmationDetails && (
+        <AlertDialog open={isSyncConfirmDialogOpen} onOpenChange={setIsSyncConfirmDialogOpen}>
+            <AlertDialogContent>
+                <AlertDialogHeader>
+                    <AlertDialogTitle>Confirm Synchronization</AlertDialogTitle>
+                    <AlertDialogDescription>
+                        Please review the changes that will be made:
+                        <ul className="list-disc pl-5 mt-2 space-y-1">
+                            <li>Items to Add to DR: <strong>{syncConfirmationDetails.toAdd}</strong></li>
+                            <li>Items to Update on DR: <strong>{syncConfirmationDetails.toUpdate}</strong></li>
+                            <li>Items to Remove from DR: <strong>{syncConfirmationDetails.toRemove}</strong></li>
+                        </ul>
+                        This action will synchronize files from Primary to DR based on the differences found.
+                    </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                    <AlertDialogCancel onClick={() => setIsSyncConfirmDialogOpen(false)}>Cancel</AlertDialogCancel>
+                    <AlertDialogAction onClick={executeConfirmedSyncAll} disabled={isSyncingAll}>
+                        {isSyncingAll ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                        Confirm & Sync All
+                    </AlertDialogAction>
+                </AlertDialogFooter>
+            </AlertDialogContent>
+        </AlertDialog>
+      )}
     </div>
   );
 }
