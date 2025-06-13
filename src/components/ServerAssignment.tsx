@@ -9,7 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, DragEndEvent, DragOverlay, DropAnimation, defaultDropAnimationSideEffects } from '@dnd-kit/core';
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { GripVertical, ServerIcon, Shuffle, CheckCircle, XCircle, RefreshCw, AlertCircle } from 'lucide-react';
+import { GripVertical, ServerIcon as DefaultServerIcon, Shuffle, CheckCircle, XCircle, RefreshCw, AlertCircle } from 'lucide-react'; // Renamed Server to DefaultServerIcon to avoid conflict
 
 interface DraggableItemProps {
   server: RawServer | AssignedServer;
@@ -19,8 +19,9 @@ interface DraggableItemProps {
 const mockCheckServerReachability = (serverName: string): Promise<boolean> => {
   return new Promise(resolve => {
     setTimeout(() => {
+      // Simulate ~80% success rate
       resolve(Math.random() < 0.8);
-    }, 1000 + Math.random() * 1000);
+    }, 1000 + Math.random() * 1000); // Simulate network delay
   });
 };
 
@@ -44,7 +45,14 @@ const DraggableServerItem: React.FC<DraggableItemProps & ReturnType<typeof useSo
   };
 
   const assignedInfo = isAssigned ? assignedServerDetails : null;
-  const baseType = (server as RawServer).type || ((assignedInfo?.originalRawServerId || '').includes('_primary_') ? 'primary' : 'dr');
+  // Determine original type for display, more reliably
+  let originalType: 'primary' | 'dr' | undefined = undefined;
+  if (!isAssigned && (server as RawServer).type) {
+    originalType = (server as RawServer).type;
+  } else if (assignedInfo?.originalRawServerId) {
+    if (assignedInfo.originalRawServerId.includes('_primary_')) originalType = 'primary';
+    else if (assignedInfo.originalRawServerId.includes('_dr_')) originalType = 'dr';
+  }
 
 
   return (
@@ -54,10 +62,10 @@ const DraggableServerItem: React.FC<DraggableItemProps & ReturnType<typeof useSo
       {...attributes}
       className={`p-3 mb-2 rounded-md shadow-sm flex items-center justify-between transition-shadow
                   ${isOverlay ? 'bg-primary text-primary-foreground z-50 ring-2 ring-primary' : 'bg-card border'}
-                  ${isAssigned && baseType === 'primary' ? 'border-blue-500' : ''}
-                  ${isAssigned && baseType === 'dr' ? 'border-purple-500' : ''}
-                  ${!isAssigned && (server as RawServer).type === 'primary' ? 'border-blue-300 border-dashed' : ''}
-                  ${!isAssigned && (server as RawServer).type === 'dr' ? 'border-purple-300 border-dashed' : ''}
+                  ${isAssigned && originalType === 'primary' ? 'border-blue-500' : ''}
+                  ${isAssigned && originalType === 'dr' ? 'border-purple-500' : ''}
+                  ${!isAssigned && originalType === 'primary' ? 'border-blue-300 border-dashed' : ''}
+                  ${!isAssigned && originalType === 'dr' ? 'border-purple-300 border-dashed' : ''}
                 `}
     >
       <div className="flex items-center gap-2">
@@ -69,9 +77,9 @@ const DraggableServerItem: React.FC<DraggableItemProps & ReturnType<typeof useSo
             {assignedInfo.isReachable === null && !assignedInfo.isCheckingReachability && <AlertCircle className="h-4 w-4 text-yellow-500" />}
           </>
         )}
-        {!isAssigned && <ServerIcon className="h-4 w-4 text-muted-foreground" />}
+        {!isAssigned && <DefaultServerIcon className="h-4 w-4 text-muted-foreground" />}
         <span className="font-medium">{server.name}</span>
-        {!isAssigned && <span className="text-xs text-muted-foreground">({(server as RawServer).type})</span>}
+        {!isAssigned && originalType && <span className="text-xs text-muted-foreground">({originalType})</span>}
       </div>
       <button {...listeners} className="p-1 text-muted-foreground hover:text-foreground">
         <GripVertical className="h-5 w-5" />
@@ -87,29 +95,26 @@ const SortableServerItem: React.FC<{server: RawServer | AssignedServer, isAssign
 
 
 interface DroppableZoneProps {
-  id: string; // e.g., "primary-zone", "dr-zone"
+  id: string; 
   title: string;
-  servers: AssignedServer[]; // Servers currently in this zone
-  children?: React.ReactNode; // For placeholder text
+  servers: AssignedServer[]; 
+  children?: React.ReactNode; 
 }
 
-// This component defines a droppable area that also lists its current items.
+
 const DroppableZone: React.FC<DroppableZoneProps> = ({ id, title, servers, children }) => {
-  // useSortable makes the zone itself a potential drop target if needed for reordering zones (not used here)
-  // but more importantly, SortableContext inside makes items within it sortable and part of the DND system.
   const { setNodeRef: zoneSetNodeRef, isOver: isZoneOver } = useSortable({ id }); 
   
   return (
     <div
-      ref={zoneSetNodeRef} // This ref is for the zone itself if it were sortable among other zones.
+      ref={zoneSetNodeRef} 
       className={`p-4 border rounded-lg min-h-[200px] transition-colors ${isZoneOver ? 'bg-accent/30 border-accent' : 'bg-secondary/50 border-dashed'}`}
     >
       <h3 className="text-lg font-semibold mb-3 text-center text-foreground">{title}</h3>
-      {/* SortableContext manages the items *within* this zone */}
       <SortableContext items={servers.map(s => s.id)} strategy={verticalListSortingStrategy}>
         <div className="space-y-2">
           {servers.map(server => <SortableServerItem key={server.id} server={server} isAssigned assignedServerDetails={server} />)}
-          {children} {/* Typically not used if servers are present */}
+          {children} 
           {servers.length === 0 && !children && <p className="text-sm text-muted-foreground text-center py-4">Drag servers here</p>}
         </div>
       </SortableContext>
@@ -118,7 +123,7 @@ const DroppableZone: React.FC<DroppableZoneProps> = ({ id, title, servers, child
 };
 
 interface ServerAssignmentProps {
-  availableServers: RawServer[]; // This should be ALL raw servers defined by user
+  availableServers: RawServer[]; 
   initialPrimaryServers?: AssignedServer[];
   initialDrServers?: AssignedServer[];
   onAssignmentComplete: (primary: AssignedServer[], dr: AssignedServer[]) => void;
@@ -140,7 +145,6 @@ const ServerAssignment: React.FC<ServerAssignmentProps> = ({
       ...initialPrimaryServers.map(s => s.originalRawServerId),
       ...initialDrServers.map(s => s.originalRawServerId)
     ]);
-    // `availableServers` (prop) is the complete list. Filter it to find unassigned ones.
     setUnassigned(availableServers.filter(s => !assignedOriginalIds.has(s.id)));
     setPrimaryZone(initialPrimaryServers);
     setDrZone(initialDrServers);
@@ -176,7 +180,7 @@ const ServerAssignment: React.FC<ServerAssignmentProps> = ({
     if (!over || !active) return;
 
     const activeServerId = active.id as string;
-    const overId = over.id as string; // This can be a zone ID or an item ID
+    const overId = over.id as string; 
 
     let sourceList: (RawServer[] | AssignedServer[]) = unassigned;
     let setSourceListState: React.Dispatch<React.SetStateAction<any>> = setUnassigned;
@@ -197,39 +201,49 @@ const ServerAssignment: React.FC<ServerAssignmentProps> = ({
     }
 
 
-    const isOverUnassignedZone = overId === 'unassigned-zone' || unassigned.some(s => s.id === overId);
-    const isOverPrimaryZone = overId === 'primary-zone' || primaryZone.some(s => s.id === overId);
-    const isOverDrZone = overId === 'dr-zone' || drZone.some(s => s.id === overId);
+    const isOverUnassignedZoneItems = unassigned.some(s => s.id === overId);
+    const isOverUnassignedZoneContainer = overId === 'unassigned-zone';
+    const isOverUnassignedZone = isOverUnassignedZoneContainer || isOverUnassignedZoneItems;
+
+    const isOverPrimaryZoneItems = primaryZone.some(s => s.id === overId);
+    const isOverPrimaryZoneContainer = overId === 'primary-zone';
+    const isOverPrimaryZone = isOverPrimaryZoneContainer || isOverPrimaryZoneItems;
+
+    const isOverDrZoneItems = drZone.some(s => s.id === overId);
+    const isOverDrZoneContainer = overId === 'dr-zone';
+    const isOverDrZone = isOverDrZoneContainer || isOverDrZoneItems;
+    
 
     const serverToMove = sourceList.find(s => s.id === activeServerId);
     if (!serverToMove) return;
     
+    if (active.id === over.id) return; // Dropped on itself
+
     // Reordering within the same list
-    if ((isOverUnassignedZone && sourceZoneType === 'unassigned') ||
-        (isOverPrimaryZone && sourceZoneType === 'primary') ||
-        (isOverDrZone && sourceZoneType === 'dr')) {
-      if (active.id !== over.id) { // Check if it's not dropped on itself
-        const oldIndex = sourceList.findIndex(s => s.id === active.id);
-        // If over.id is a zone ID, append. Otherwise, find index of item dropped over.
-        const newIndex = (over.id === 'unassigned-zone' || over.id === 'primary-zone' || over.id === 'dr-zone') 
-                         ? sourceList.length -1 // effectively append if not dropping on specific item
-                         : sourceList.findIndex(s => s.id === over.id);
-        
-        if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
-            setSourceListState((prev: any[]) => arrayMove(prev, oldIndex, newIndex));
-        } else if (oldIndex !== -1 && (over.id === 'unassigned-zone' || over.id === 'primary-zone' || over.id === 'dr-zone')) {
-            // Dragged to the zone itself, not a specific item (e.g. empty list)
-            // arrayMove can handle this if newIndex is appropriately set (e.g. list.length -1 or 0 for beginning)
-            // For now, we assume if not on specific item, it's like appending. Dnd-kit usually handles this.
-        }
+    if ((sourceZoneType === 'unassigned' && isOverUnassignedZone) ||
+        (sourceZoneType === 'primary' && isOverPrimaryZone) ||
+        (sourceZoneType === 'dr' && isOverDrZone)) {
+      
+      const oldIndex = sourceList.findIndex(s => s.id === active.id);
+      let newIndex = sourceList.findIndex(s => s.id === over.id);
+
+      if (newIndex === -1) { // Dropped on the zone container, not an item
+          if (isOverUnassignedZoneContainer && sourceZoneType === 'unassigned') newIndex = unassigned.length -1;
+          else if (isOverPrimaryZoneContainer && sourceZoneType === 'primary') newIndex = primaryZone.length -1;
+          else if (isOverDrZoneContainer && sourceZoneType === 'dr') newIndex = drZone.length -1;
+          else return; // Should not happen if logic is correct
+      }
+      
+      if (oldIndex !== -1 && newIndex !== -1) {
+          setSourceListState((prev: any[]) => arrayMove(prev, oldIndex, newIndex));
       }
       return;
     }
     
     // Moving between lists
-    setSourceListState((prev: any[]) => prev.filter(s => s.id !== activeServerId)); // Remove from source
+    setSourceListState((prev: any[]) => prev.filter(s => s.id !== activeServerId)); 
     
-    if (isOverPrimaryZone) { // Moving TO Primary
+    if (isOverPrimaryZone) { 
       const assignedInstance: AssignedServer = {
         id: `assigned_p_${Date.now()}_${serverToMove.name.replace(/\s+/g, '_')}`,
         name: serverToMove.name,
@@ -237,10 +251,10 @@ const ServerAssignment: React.FC<ServerAssignmentProps> = ({
         isReachable: null,
         isCheckingReachability: false,
       };
-      setPrimaryZone(prev => [...prev, assignedInstance]);
+      setPrimaryZone(prev => [...prev, assignedInstance]); // For simplicity, append. Could refine to insert at overId index.
       performReachabilityCheck(assignedInstance.id, assignedInstance.name, 'primary');
 
-    } else if (isOverDrZone) { // Moving TO DR
+    } else if (isOverDrZone) { 
        const assignedInstance: AssignedServer = {
         id: `assigned_d_${Date.now()}_${serverToMove.name.replace(/\s+/g, '_')}`,
         name: serverToMove.name,
@@ -248,24 +262,33 @@ const ServerAssignment: React.FC<ServerAssignmentProps> = ({
         isReachable: null,
         isCheckingReachability: false,
       };
-      setDrZone(prev => [...prev, assignedInstance]);
+      setDrZone(prev => [...prev, assignedInstance]); // Append
       performReachabilityCheck(assignedInstance.id, assignedInstance.name, 'dr');
 
-    } else if (isOverUnassignedZone) { // Moving TO Unassigned (from Primary or DR)
+    } else if (isOverUnassignedZone) { 
       if (sourceZoneType === 'primary' || sourceZoneType === 'dr') {
         const assignedServerBeingMoved = serverToMove as AssignedServer;
         const originalRawServerDetails = availableServers.find(rs => rs.id === assignedServerBeingMoved.originalRawServerId);
 
         if (originalRawServerDetails) {
           setUnassigned(prevUnassigned => {
-            if (prevUnassigned.some(s => s.id === originalRawServerDetails.id)) {
-              return prevUnassigned; // Should not happen if removed from source correctly
+            if (prevUnassigned.some(s => s.id === originalRawServerDetails!.id)) {
+              return prevUnassigned;
             }
-            return [...prevUnassigned, originalRawServerDetails];
+
+            const overItemIndex = prevUnassigned.findIndex(item => item.id === over.id);
+
+            if (over.id && over.id !== 'unassigned-zone' && overItemIndex !== -1) {
+              const newItems = [...prevUnassigned];
+              newItems.splice(overItemIndex, 0, originalRawServerDetails!);
+              return newItems;
+            } else {
+              return [...prevUnassigned, originalRawServerDetails!]; 
+            }
           });
         } else {
           console.error("CRITICAL: Original RawServer not found in availableServers for ID:", assignedServerBeingMoved.originalRawServerId);
-          const reconstructedRawServer: RawServer = { // Fallback
+          const reconstructedRawServer: RawServer = { 
               id: assignedServerBeingMoved.originalRawServerId,
               name: assignedServerBeingMoved.name,
               type: assignedServerBeingMoved.originalRawServerId.includes('_primary_') ? 'primary' : (assignedServerBeingMoved.originalRawServerId.includes('_dr_') ? 'dr' : 'primary')
@@ -297,7 +320,6 @@ const ServerAssignment: React.FC<ServerAssignmentProps> = ({
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             
-            {/* Available Servers Zone */}
             <div className="border p-4 rounded-lg bg-background min-h-[200px]">
               <h3 className="text-lg font-semibold mb-3 text-center text-foreground">Available Servers</h3>
               <SortableContext items={unassigned.map(s => s.id)} strategy={verticalListSortingStrategy} id="unassigned-zone">
@@ -321,11 +343,11 @@ const ServerAssignment: React.FC<ServerAssignmentProps> = ({
           onClick={() => onAssignmentComplete(primaryZone, drZone)} 
           size="lg" 
           className="w-full md:w-auto mt-8"
-          disabled={primaryZone.some(s => s.isCheckingReachability) || drZone.some(s => s.isCheckingReachability) || (primaryZone.length === 0 && drZone.length === 0 && availableServers.length > 0) } // Allow proceeding if all servers are assigned or no servers to assign
+          disabled={primaryZone.some(s => s.isCheckingReachability) || drZone.some(s => s.isCheckingReachability) || (primaryZone.length === 0 && drZone.length === 0 && availableServers.length > 0 && unassigned.length === availableServers.length) }
         >
           Next: Configure Applications
         </Button>
-         {(primaryZone.length === 0 && drZone.length === 0 && availableServers.length > 0 && !unassigned.some(s=> s !== undefined)) && ( // Check if unassigned has actual items, not just an empty array
+         {(primaryZone.length === 0 && drZone.length === 0 && availableServers.length > 0 && unassigned.length === availableServers.length ) && ( 
             <p className="text-sm text-destructive mt-2">Please assign at least one server to either Primary or DR zone if servers are available.</p>
         )}
          {(primaryZone.some(s => s.isCheckingReachability) || drZone.some(s => s.isCheckingReachability)) && (
@@ -337,6 +359,6 @@ const ServerAssignment: React.FC<ServerAssignmentProps> = ({
 };
 
 export default ServerAssignment;
-
+    
 
     
