@@ -5,11 +5,11 @@ export interface FileNode {
   type: 'file' | 'directory';
   path: string; // Full path from the conceptual root of the server
   relativePath: string; // Path relative to the user-provided root path for that server
-  content?: string; // Mock content for comparison
+  content?: string | null; // Content is optional, not fetched by default listing
   children?: FileNode[];
   status: 'synced' | 'different' | 'primary_only' | 'dr_only' | 'unknown';
   lastModified: string; // ISO string
-  size: string; // e.g., "1KB", "2MB"
+  size: string; // e.g., "1KB", "2MB" or raw bytes as string from PS
   
   primaryDetails?: { lastModified: string; size: string; contentSnippet?: string };
   drDetails?: { lastModified: string; size: string; contentSnippet?: string };
@@ -20,6 +20,7 @@ export interface FileNode {
 export interface FileDifference {
   path: string; // relative path of the file
   name: string;
+  type: 'file' | 'directory'; // Added type here for sync script
   status: 'different' | 'primary_only' | 'dr_only' | 'synced';
   primaryFile?: FileNode;
   drFile?: FileNode;
@@ -63,4 +64,10 @@ export interface AppConfigurationBundle {
   assignedDrServers: AssignedServer[];
   applications: Application[];
   version: string; 
+}
+
+export interface SyncOperationError {
+    path: string;
+    status: string; // "failed"
+    message: string;
 }
