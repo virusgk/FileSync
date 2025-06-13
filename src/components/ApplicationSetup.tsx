@@ -29,7 +29,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
+  // AlertDialogTrigger, // Removed this import
 } from "@/components/ui/alert-dialog";
 
 interface ApplicationSetupProps {
@@ -121,7 +121,7 @@ const ApplicationSetup: React.FC<ApplicationSetupProps> = ({
     setAppDrPath(appToEdit.drPath);
     setSelectedPrimaryIds(appToEdit.primaryServerIds);
     setSelectedDrIds(appToEdit.drServerIds);
-    window.scrollTo({ top: 0, behavior: 'smooth' }); // Scroll to top to see the form
+    window.scrollTo({ top: 0, behavior: 'smooth' }); 
   };
 
   const handleDeleteApp = (appId: string) => {
@@ -295,11 +295,10 @@ const ApplicationSetup: React.FC<ApplicationSetupProps> = ({
                         <Button onClick={() => handleEditApp(app)} variant="ghost" size="sm" title="Edit Application">
                           <Edit3 className="h-4 w-4" />
                         </Button>
-                        <AlertDialogTrigger asChild>
-                          <Button variant="ghost" size="sm" title="Delete Application" onClick={() => setAppToDelete(app)}>
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                          </Button>
-                        </AlertDialogTrigger>
+                        {/* Removed AlertDialogTrigger and used Button directly */}
+                        <Button variant="ghost" size="sm" title="Delete Application" onClick={() => setAppToDelete(app)}>
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -345,5 +344,6 @@ const ApplicationSetup: React.FC<ApplicationSetupProps> = ({
 };
 
 export default ApplicationSetup;
+    
 
     
