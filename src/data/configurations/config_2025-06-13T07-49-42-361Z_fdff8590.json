@@ -1,0 +1,60 @@
+{
+  "rawPrimaryServers": [
+    {
+      "id": "raw_primary_0_PR001",
+      "name": "PR001",
+      "type": "primary"
+    },
+    {
+      "id": "raw_primary_1_PR002",
+      "name": "PR002",
+      "type": "primary"
+    }
+  ],
+  "rawDrServers": [
+    {
+      "id": "raw_dr_0_DR001",
+      "name": "DR001",
+      "type": "dr"
+    },
+    {
+      "id": "raw_dr_1_DR002",
+      "name": "DR002",
+      "type": "dr"
+    }
+  ],
+  "assignedPrimaryServers": [
+    {
+      "id": "raw_primary_0_PR001",
+      "name": "PR001",
+      "originalRawServerId": "raw_primary_0_PR001",
+      "isReachable": false,
+      "isCheckingReachability": false
+    },
+    {
+      "id": "raw_primary_1_PR002",
+      "name": "PR002",
+      "originalRawServerId": "raw_primary_1_PR002",
+      "isReachable": false,
+      "isCheckingReachability": false
+    }
+  ],
+  "assignedDrServers": [
+    {
+      "id": "raw_dr_0_DR001",
+      "name": "DR001",
+      "originalRawServerId": "raw_dr_0_DR001",
+      "isReachable": true,
+      "isCheckingReachability": false
+    },
+    {
+      "id": "raw_dr_1_DR002",
+      "name": "DR002",
+      "originalRawServerId": "raw_dr_1_DR002",
+      "isReachable": true,
+      "isCheckingReachability": false
+    }
+  ],
+  "applications": [],
+  "version": "1.0"
+}
