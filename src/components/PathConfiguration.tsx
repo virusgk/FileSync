@@ -1,3 +1,4 @@
+
 import type * as React from 'react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -7,11 +8,13 @@ import { ChevronsRightLeft } from 'lucide-react';
 
 interface PathConfigurationProps {
   primaryPath: string;
-  onPrimaryPathChange: (value: string) => void;
+  onPrimaryPathChange: (value: string) => void; // Kept for compatibility, but might be read-only now
   drPath: string;
-  onDrPathChange: (value: string) => void;
+  onDrPathChange: (value: string) => void; // Kept for compatibility
   onLoadFiles: () => void;
   isLoading: boolean;
+  appName?: string; // Optional application name to display
+  isReadOnly?: boolean; // To make inputs read-only if paths are from app config
 }
 
 const PathConfiguration: React.FC<PathConfigurationProps> = ({
@@ -21,11 +24,15 @@ const PathConfiguration: React.FC<PathConfigurationProps> = ({
   onDrPathChange,
   onLoadFiles,
   isLoading,
+  appName,
+  isReadOnly = false,
 }) => {
   return (
     <Card className="shadow-md">
       <CardHeader>
-        <CardTitle className="font-headline text-2xl">Path Configuration</CardTitle>
+        <CardTitle className="font-headline text-2xl">
+            {appName ? `Paths for: ${appName}` : "Path Configuration"}
+        </CardTitle>
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
@@ -37,10 +44,11 @@ const PathConfiguration: React.FC<PathConfigurationProps> = ({
               id="primaryPath"
               type="text"
               value={primaryPath}
-              onChange={(e) => onPrimaryPathChange(e.target.value)}
+              onChange={(e) => !isReadOnly && onPrimaryPathChange(e.target.value)}
               placeholder="/path/to/primary/files"
               className="font-code"
-              disabled={isLoading}
+              disabled={isLoading || isReadOnly}
+              readOnly={isReadOnly}
             />
           </div>
           <div>
@@ -51,16 +59,17 @@ const PathConfiguration: React.FC<PathConfigurationProps> = ({
               id="drPath"
               type="text"
               value={drPath}
-              onChange={(e) => onDrPathChange(e.target.value)}
+              onChange={(e) => !isReadOnly && onDrPathChange(e.target.value)}
               placeholder="/path/to/dr/files"
               className="font-code"
-              disabled={isLoading}
+              disabled={isLoading || isReadOnly}
+              readOnly={isReadOnly}
             />
           </div>
         </div>
-        <Button onClick={onLoadFiles} disabled={isLoading} variant="default" size="lg">
+        <Button onClick={onLoadFiles} disabled={isLoading || !primaryPath || !drPath} variant="default" size="lg">
           <ChevronsRightLeft className="mr-2 h-5 w-5" />
-          {isLoading ? 'Loading Files...' : 'Load & Compare Files'}
+          {isLoading ? 'Loading Files...' : (appName ? `Load Files for ${appName}` : 'Load & Compare Files')}
         </Button>
       </CardContent>
     </Card>

@@ -1,39 +1,64 @@
+
 'use client';
 
-import { useState, useCallback, useMemo } from 'react';
-import type { FileNode, FileDifference, SyncLogEntry } from '@/types';
+import { useState, useCallback, useMemo, useEffect } from 'react';
+import type { FileNode, FileDifference, SyncLogEntry, RawServer, AssignedServer, Application } from '@/types';
 import { suggestResolution, type SuggestResolutionOutput } from '@/ai/flows/suggest-resolution';
 import { useToast } from "@/hooks/use-toast";
 
 import AppHeader from '@/components/AppHeader';
-import PathConfiguration from '@/components/PathConfiguration';
 import FileExplorer from '@/components/FileExplorer';
 import ComparisonDetails from '@/components/ComparisonDetails';
 import SyncControls from '@/components/SyncControls';
 import SyncLogDialog from '@/components/SyncLogDialog';
+import ServerInputForm from '@/components/ServerInputForm';
+import ServerAssignment from '@/components/ServerAssignment';
+import ApplicationSetup from '@/components/ApplicationSetup';
 
 import { generateMockFiles, compareFileTrees } from '@/lib/file-system';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { ArrowLeft } from 'lucide-react';
+
+enum ConfigStage {
+  SERVER_INPUT = 'serverInput',
+  SERVER_ASSIGNMENT = 'serverAssignment',
+  APP_CONFIGURATION = 'appConfiguration',
+  FILE_SYNC = 'fileSync',
+}
 
 export default function FileSyncPage() {
-  const [primaryPath, setPrimaryPath] = useState<string>('/opt/app/live-data');
-  const [drPath, setDrPath] = useState<string>('/srv/app/dr-backup');
+  const [currentStage, setCurrentStage] = useState<ConfigStage>(ConfigStage.SERVER_INPUT);
 
+  // Stage 1: Server Input
+  const [rawPrimaryServers, setRawPrimaryServers] = useState<RawServer[]>([]);
+  const [rawDrServers, setRawDrServers] = useState<RawServer[]>([]);
+
+  // Stage 2: Server Assignment
+  const [availableServersForAssignment, setAvailableServersForAssignment] = useState<RawServer[]>([]);
+  const [assignedPrimaryServers, setAssignedPrimaryServers] = useState<AssignedServer[]>([]);
+  const [assignedDrServers, setAssignedDrServers] = useState<AssignedServer[]>([]);
+
+  // Stage 3: Application Configuration
+  const [applications, setApplications] = useState<Application[]>([]);
+  const [selectedApplicationForSync, setSelectedApplicationForSync] = useState<Application | null>(null);
+
+  // Stage 4: File Sync (existing state, now driven by selectedApplicationForSync)
+  const [primaryPath, setPrimaryPath] = useState<string>(''); // Was: '/opt/app/live-data'
+  const [drPath, setDrPath] = useState<string>(''); // Was: '/srv/app/dr-backup'
+  
   const [primaryFiles, setPrimaryFiles] = useState<FileNode[]>([]);
   const [drFiles, setDrFiles] = useState<FileNode[]>([]);
   const [differences, setDifferences] = useState<FileDifference[]>([]);
-  
   const [selectedDifference, setSelectedDifference] = useState<FileDifference | null>(null);
-  
   const [aiSuggestion, setAiSuggestion] = useState<SuggestResolutionOutput | null>(null);
   const [isAiLoading, setIsAiLoading] = useState<boolean>(false);
-  
   const [syncLog, setSyncLog] = useState<SyncLogEntry[]>([]);
   const [isSyncLogOpen, setIsSyncLogOpen] = useState<boolean>(false);
-  
   const [isGlobalLoading, setIsGlobalLoading] = useState<boolean>(false);
-  const [isSyncingFile, setIsSyncingFile] = useState<boolean>(false); // For individual file sync
-  const [isSyncingAll, setIsSyncingAll] = useState<boolean>(false); // For "Sync All"
+  const [isSyncingFile, setIsSyncingFile] = useState<boolean>(false);
+  const [isSyncingAll, setIsSyncingAll] = useState<boolean>(false);
 
   const { toast } = useToast();
 
@@ -41,13 +66,92 @@ export default function FileSyncPage() {
     setSyncLog(prev => [...prev, { id: Date.now().toString(), timestamp: new Date().toISOString(), message, status }]);
   };
 
+  // Stage 1 Handlers
+  const handleServerInputSubmit = (primaryNames: string[], drNames: string[]) => {
+    const createRawServers = (names: string[], type: 'primary' | 'dr'): RawServer[] =>
+      names.filter(name => name.trim() !== '').map((name, index) => ({
+        id: `raw_${type}_${index}_${name.trim()}`,
+        name: name.trim(),
+        type,
+      }));
+    
+    const newRawPrimary = createRawServers(primaryNames, 'primary');
+    const newRawDr = createRawServers(drNames, 'dr');
+    
+    setRawPrimaryServers(newRawPrimary);
+    setRawDrServers(newRawDr);
+    setAvailableServersForAssignment([...newRawPrimary, ...newRawDr]);
+    setCurrentStage(ConfigStage.SERVER_ASSIGNMENT);
+    toast({ title: "Servers Entered", description: "Proceed to assign servers." });
+  };
+
+  // Stage 2 Handlers
+  const handleServerAssignmentComplete = (primary: AssignedServer[], dr: AssignedServer[]) => {
+    setAssignedPrimaryServers(primary);
+    setAssignedDrServers(dr);
+    setCurrentStage(ConfigStage.APP_CONFIGURATION);
+    toast({ title: "Servers Assigned", description: "Proceed to configure applications." });
+  };
+  
+  // Stage 3 Handlers
+  const handleAddApplication = (app: Application) => {
+    setApplications(prev => [...prev, app]);
+    toast({ title: "Application Added", description: `${app.name} has been configured.` });
+  };
+
+  const handleStartFileSync = (app: Application) => {
+    setSelectedApplicationForSync(app);
+    setPrimaryPath(app.primaryPath); // Set paths from the selected application
+    setDrPath(app.drPath);
+    setCurrentStage(ConfigStage.FILE_SYNC);
+    // Reset file sync specific states
+    setPrimaryFiles([]);
+    setDrFiles([]);
+    setDifferences([]);
+    setSelectedDifference(null);
+    setAiSuggestion(null);
+    toast({ title: `Starting Sync for ${app.name}`, description: `Loading files for application ${app.name}.`});
+  };
+  
+  // Reset to a previous stage
+  const handleGoBack = () => {
+    if (currentStage === ConfigStage.FILE_SYNC) {
+      setCurrentStage(ConfigStage.APP_CONFIGURATION);
+      setSelectedApplicationForSync(null); // Clear selected app
+      setPrimaryPath('');
+      setDrPath('');
+    } else if (currentStage === ConfigStage.APP_CONFIGURATION) {
+      setCurrentStage(ConfigStage.SERVER_ASSIGNMENT);
+    } else if (currentStage === ConfigStage.SERVER_ASSIGNMENT) {
+      setCurrentStage(ConfigStage.SERVER_INPUT);
+      // Optionally clear assigned servers if going back from assignment
+      // setAssignedPrimaryServers([]);
+      // setAssignedDrServers([]);
+      // setAvailableServersForAssignment([]);
+    }
+  };
+
+
+  // --- Existing File Sync Logic (adapted) ---
+  useEffect(() => {
+    // Auto-load files if paths are set (e.g., after selecting an app for sync)
+    // and we are in FILE_SYNC stage.
+    if (currentStage === ConfigStage.FILE_SYNC && selectedApplicationForSync && primaryPath && drPath) {
+      handleLoadFiles();
+    }
+  }, [selectedApplicationForSync, primaryPath, drPath, currentStage]);
+
+
   const handleLoadFiles = useCallback(async () => {
+    if (!primaryPath || !drPath) {
+      toast({ title: "Path Error", description: "Primary and DR paths must be set for the application.", variant: "destructive" });
+      return;
+    }
     setIsGlobalLoading(true);
     setSelectedDifference(null);
     setAiSuggestion(null);
-    addLogEntry(`Loading files from Primary: ${primaryPath} and DR: ${drPath}`, 'info');
+    addLogEntry(`Loading files from Primary: ${primaryPath} and DR: ${drPath} for app: ${selectedApplicationForSync?.name}`, 'info');
     
-    // Simulate API call
     await new Promise(resolve => setTimeout(resolve, 1000));
 
     const mockPrimary = generateMockFiles(primaryPath, 'primary');
@@ -60,9 +164,10 @@ export default function FileSyncPage() {
     setDifferences(comparedDifferences);
     
     setIsGlobalLoading(false);
-    addLogEntry(`Comparison complete. Found ${comparedDifferences.length} differences.`, 'info');
-    toast({ title: "Files Loaded", description: "File comparison complete." });
-  }, [primaryPath, drPath, toast]);
+    addLogEntry(`Comparison complete for ${selectedApplicationForSync?.name}. Found ${comparedDifferences.length} differences.`, 'info');
+    toast({ title: "Files Loaded", description: `File comparison complete for ${selectedApplicationForSync?.name}.` });
+  }, [primaryPath, drPath, toast, selectedApplicationForSync]);
+
 
   const findNodeByPath = (nodes: FileNode[], path: string): FileNode | undefined => {
     for (const node of nodes) {
@@ -73,16 +178,6 @@ export default function FileSyncPage() {
       }
     }
     return undefined;
-  };
-
-  const updateNodeInTree = (nodes: FileNode[], updatedNode: FileNode): FileNode[] => {
-    return nodes.map(node => {
-      if (node.id === updatedNode.id) return updatedNode;
-      if (node.children) {
-        return { ...node, children: updateNodeInTree(node.children, updatedNode) };
-      }
-      return node;
-    });
   };
 
   const handleToggleDirectory = useCallback((nodeToToggle: FileNode) => {
@@ -103,23 +198,21 @@ export default function FileSyncPage() {
     setTree(prevTree => updateOpenState(prevTree));
   }, [primaryFiles, drFiles]);
 
-
   const handleSelectFile = useCallback((node: FileNode) => {
     const diff = differences.find(d => d.path === node.relativePath);
     if (diff) {
       setSelectedDifference(diff);
-      setAiSuggestion(null); // Clear previous AI suggestion
+      setAiSuggestion(null);
     } else {
-      // Handle selection of synced files or files not in diff list if needed
-      // For now, only files with differences are "selectable" for details view
       const pFile = findNodeByPath(primaryFiles, node.path);
-      const dFile = findNodeByPath(drFiles, node.path.replace(primaryPath, drPath)); // Adjust for DR path if selecting from primary
+      const dFileNodePath = selectedApplicationForSync ? node.path.replace(selectedApplicationForSync.primaryPath, selectedApplicationForSync.drPath) : node.path;
+      const dFile = findNodeByPath(drFiles, dFileNodePath);
       
       if (pFile?.status === 'synced' || dFile?.status === 'synced') {
          setSelectedDifference({
            path: node.relativePath,
            name: node.name,
-           status: 'synced', // This might not be in `differences` list
+           status: 'synced',
            primaryFile: pFile,
            drFile: dFile,
            summary: "Files are in sync."
@@ -128,8 +221,7 @@ export default function FileSyncPage() {
         setSelectedDifference(null);
       }
     }
-  }, [differences, primaryFiles, drFiles, primaryPath, drPath]);
-
+  }, [differences, primaryFiles, drFiles, selectedApplicationForSync]);
 
   const handleGetAiSuggestion = useCallback(async (details: {primaryPath: string, drPath: string, diffSummary: string}) => {
     if (!selectedDifference) return;
@@ -156,9 +248,8 @@ export default function FileSyncPage() {
 
   const simulateSync = async (fileDiff: FileDifference) => {
     addLogEntry(`Syncing ${fileDiff.path}...`, 'info');
-    await new Promise(resolve => setTimeout(resolve, 1500)); // Simulate network delay
+    await new Promise(resolve => setTimeout(resolve, 1500));
 
-    // Update file status in both trees
     const updateStatusInTree = (tree: FileNode[], relativePath: string): FileNode[] => {
       return tree.map(node => {
         if (node.relativePath === relativePath) {
@@ -174,7 +265,6 @@ export default function FileSyncPage() {
     setPrimaryFiles(prev => updateStatusInTree(prev, fileDiff.path));
     setDrFiles(prev => updateStatusInTree(prev, fileDiff.path));
     
-    // Remove from differences list and update selectedDifference if it's the one synced
     setDifferences(prev => prev.filter(d => d.path !== fileDiff.path));
     if (selectedDifference?.path === fileDiff.path) {
       setSelectedDifference(prev => prev ? {...prev, status: 'synced', summary: "Successfully synced." } : null);
@@ -196,14 +286,14 @@ export default function FileSyncPage() {
     const diffToSync = differences.filter(d => d.status === 'different' || d.status === 'primary_only' || d.status === 'dr_only');
     
     for (const diff of diffToSync) {
-      await simulateSync(diff); // simulateSync updates states internally
-      await new Promise(resolve => setTimeout(resolve, 200)); // Small delay between syncs
+      await simulateSync(diff);
+      await new Promise(resolve => setTimeout(resolve, 200));
     }
     
-    addLogEntry(`Sync all operation completed. ${diffToSync.length} items processed.`, 'success');
-    toast({ title: "Sync All Complete", description: `${diffToSync.length} items processed.` });
+    addLogEntry(`Sync all operation completed for ${selectedApplicationForSync?.name}. ${diffToSync.length} items processed.`, 'success');
+    toast({ title: "Sync All Complete", description: `${diffToSync.length} items processed for ${selectedApplicationForSync?.name}.` });
     setIsSyncingAll(false);
-  }, [differences, toast]);
+  }, [differences, toast, selectedApplicationForSync]);
   
   const selectedFilePathForExplorer = useMemo(() => {
     if (selectedDifference?.primaryFile) return selectedDifference.primaryFile.path;
@@ -211,58 +301,99 @@ export default function FileSyncPage() {
     return null;
   }, [selectedDifference]);
 
+  const renderBackButton = () => {
+    if (currentStage !== ConfigStage.SERVER_INPUT) {
+      return (
+        <Button variant="outline" onClick={handleGoBack} className="mb-4">
+          <ArrowLeft className="mr-2 h-4 w-4" /> Back
+        </Button>
+      );
+    }
+    return null;
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-background">
       <AppHeader />
       <ScrollArea className="flex-grow">
         <main className="container mx-auto p-4 md:p-6 space-y-6 ">
-          <PathConfiguration
-            primaryPath={primaryPath}
-            onPrimaryPathChange={setPrimaryPath}
-            drPath={drPath}
-            onDrPathChange={setDrPath}
-            onLoadFiles={handleLoadFiles}
-            isLoading={isGlobalLoading}
-          />
+          {renderBackButton()}
 
-          { (primaryFiles.length > 0 || drFiles.length > 0 || isGlobalLoading) && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-              <FileExplorer
-                title="Primary Server"
-                nodes={primaryFiles}
-                onSelectFile={handleSelectFile}
-                onToggleDirectory={handleToggleDirectory}
-                selectedFilePath={selectedFilePathForExplorer}
-                isLoading={isGlobalLoading}
-              />
-              <FileExplorer
-                title="DR Server"
-                nodes={drFiles}
-                onSelectFile={handleSelectFile}
-                onToggleDirectory={handleToggleDirectory}
-                selectedFilePath={selectedFilePathForExplorer}
-                isLoading={isGlobalLoading}
-              />
-              <ComparisonDetails
-                selectedDifference={selectedDifference}
-                onGetAiSuggestion={handleGetAiSuggestion}
-                aiSuggestion={aiSuggestion}
-                isAiLoading={isAiLoading}
-                onSyncFile={handleSyncFile}
-                isSyncingFile={isSyncingFile}
-              />
-            </div>
+          {currentStage === ConfigStage.SERVER_INPUT && (
+            <ServerInputForm onSubmit={handleServerInputSubmit} />
           )}
-          
-          {differences.length > 0 && (
-            <SyncControls
-              onSyncAllDifferent={handleSyncAllDifferent}
-              onViewLogs={() => setIsSyncLogOpen(true)}
-              isSyncingAll={isSyncingAll}
-              canSync={!isGlobalLoading && differences.length > 0}
+
+          {currentStage === ConfigStage.SERVER_ASSIGNMENT && (
+            <ServerAssignment
+              availableServers={availableServersForAssignment}
+              onAssignmentComplete={handleServerAssignmentComplete}
             />
           )}
 
+          {currentStage === ConfigStage.APP_CONFIGURATION && (
+            <ApplicationSetup
+              assignedPrimaryServers={assignedPrimaryServers}
+              assignedDrServers={assignedDrServers}
+              existingApplications={applications}
+              onAddApplication={handleAddApplication}
+              onStartSync={handleStartFileSync}
+            />
+          )}
+          
+          {currentStage === ConfigStage.FILE_SYNC && selectedApplicationForSync && (
+            <>
+              <Card className="mb-6">
+                <CardHeader>
+                  <CardTitle>Now Syncing: {selectedApplicationForSync.name}</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p>Primary Path: <code className="font-code">{selectedApplicationForSync.primaryPath}</code></p>
+                  <p>DR Path: <code className="font-code">{selectedApplicationForSync.drPath}</code></p>
+                   <Button onClick={handleLoadFiles} disabled={isGlobalLoading} variant="default" size="sm" className="mt-2">
+                    {isGlobalLoading ? 'Loading Files...' : 'Reload Files for This App'}
+                  </Button>
+                </CardContent>
+              </Card>
+
+              { (primaryFiles.length > 0 || drFiles.length > 0 || isGlobalLoading) && (
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+                  <FileExplorer
+                    title="Primary Server"
+                    nodes={primaryFiles}
+                    onSelectFile={handleSelectFile}
+                    onToggleDirectory={handleToggleDirectory}
+                    selectedFilePath={selectedFilePathForExplorer}
+                    isLoading={isGlobalLoading}
+                  />
+                  <FileExplorer
+                    title="DR Server"
+                    nodes={drFiles}
+                    onSelectFile={handleSelectFile}
+                    onToggleDirectory={handleToggleDirectory}
+                    selectedFilePath={selectedFilePathForExplorer}
+                    isLoading={isGlobalLoading}
+                  />
+                  <ComparisonDetails
+                    selectedDifference={selectedDifference}
+                    onGetAiSuggestion={handleGetAiSuggestion}
+                    aiSuggestion={aiSuggestion}
+                    isAiLoading={isAiLoading}
+                    onSyncFile={handleSyncFile}
+                    isSyncingFile={isSyncingFile}
+                  />
+                </div>
+              )}
+              
+              {differences.length > 0 && (
+                <SyncControls
+                  onSyncAllDifferent={handleSyncAllDifferent}
+                  onViewLogs={() => setIsSyncLogOpen(true)}
+                  isSyncingAll={isSyncingAll}
+                  canSync={!isGlobalLoading && differences.length > 0}
+                />
+              )}
+            </>
+          )}
         </main>
       </ScrollArea>
       <SyncLogDialog
