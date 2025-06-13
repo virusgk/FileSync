@@ -432,6 +432,30 @@ export default function FileSyncPage() {
     return undefined;
   };
 
+  // Helper function to immutably update a node's children in the tree
+  const updateNodeChildrenRecursive = (nodes: FileNode[], targetId: string, newChildren: FileNode[]): FileNode[] => {
+      if (!Array.isArray(nodes)) return nodes;
+      return nodes.map(node => {
+          if (node.id === targetId) {
+              // Found the target node, update its children
+              return { ...node, children: newChildren, isLoading: false };
+          }
+          if (node.children && Array.isArray(node.children)) {
+              // Recursively search in children
+              const updatedChildren = updateNodeChildrenRecursive(node.children, targetId, newChildren);
+              // Only create a new parent object if children were updated
+              if (updatedChildren !== node.children) {
+                  return { ...node, children: updatedChildren };
+              }
+          }
+          // No change needed for this node or its children
+          return node;
+      });
+  };
+
+  // State to track which directories are currently loading their children
+  const [loadingDirectoryIds, setLoadingDirectoryIds] = useState<Set<string>>(new Set());
+
   const handleToggleDirectory = useCallback((nodeToToggle: FileNode) => {
     const isPrimary = primaryFiles.some(n => findNodeByPathRecursive([n], nodeToToggle.path));
     const treeToUpdate = isPrimary ? primaryFiles : drFiles;
@@ -447,19 +471,58 @@ export default function FileSyncPage() {
                 console.warn("[DEBUG] updateOpenState skipping non-object node:", n);
                 return n;
             }
-            if (n.id === nodeToToggle.id) { return { ...n, isOpen: !n.isOpen }; }
-            if (n.children && Array.isArray(n.children)) { 
+
+            // Found the node to toggle
+            if (n.id === nodeToToggle.id) {
+                const newIsOpen = !n.isOpen;
+                let updatedNode = { ...n, isOpen: newIsOpen };
+
+                // If opening and children are not loaded, fetch them
+                if (newIsOpen && (!n.children || n.children.length === 0) && !loadingDirectoryIds.has(n.id)) {
+                     // Set loading state for this node
+                     setLoadingDirectoryIds(prev => new Set(prev).add(n.id));
+                     updatedNode = { ...updatedNode, isLoading: true };
+
+                     // Fetch children asynchronously
+                     fetch('/api/list-files', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ targetPath: n.path }),
+                     })
+                     .then(res => {
+                         if (!res.ok) throw new Error(`Failed to load children for ${n.path}`);
+                         return res.json();
+                     })
+                     .then(childrenData => {
+                         // Update the tree with fetched children
+                         setTree(prevTree => updateNodeChildrenRecursive(prevTree, n.id, childrenData));
+                         addLogEntry(`Loaded children for directory: ${n.path}`, 'info');
+                     })
+                     .catch(error => {
+                         console.error(`Error fetching children for ${n.path}:`, error);
+                         addLogEntry(`Error loading children for ${n.path}: ${(error as Error).message}`, 'error');
+                         toast({ title: "Load Children Error", description: `Could not load children for ${n.path}.`, variant: "destructive" });
+                         // Clear loading state and potentially mark node with error
+                         setTree(prevTree => updateNodeChildrenRecursive(prevTree, n.id, [])); // Keep children empty on error
+                     })
+                     .finally(() => {
+                         setLoadingDirectoryIds(prev => { const newState = new Set(prev); newState.delete(n.id); return newState; });
+                     });
+                }
+                return updatedNode;
+            }
+            if (n.children && Array.isArray(n.children)) {
                 const newChildren = updateOpenState(n.children);
-                 // Only create a new parent object if the children array instance or content actually changed.
                 if (newChildren !== n.children) {
-                    return { ...n, children: newChildren }; 
+ return { ...n, children: newChildren };
                 }
             }
             return n;
         });
     };
+    // Perform the initial state update immediately to toggle isOpen
     setTree(prevTree => updateOpenState(prevTree));
-  }, [primaryFiles, drFiles]);
+  }, [primaryFiles, drFiles, toast, addLogEntry, loadingDirectoryIds]);
 
   const handleSelectFile = useCallback((node: FileNode) => {
     const diff = differences.find(d => d.path === node.relativePath);
