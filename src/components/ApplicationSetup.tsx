@@ -121,6 +121,7 @@ const ApplicationSetup: React.FC<ApplicationSetupProps> = ({
     setAppDrPath(appToEdit.drPath);
     setSelectedPrimaryIds(appToEdit.primaryServerIds);
     setSelectedDrIds(appToEdit.drServerIds);
+    window.scrollTo({ top: 0, behavior: 'smooth' }); // Scroll to top to see the form
   };
 
   const handleDeleteApp = (appId: string) => {
@@ -253,15 +254,15 @@ const ApplicationSetup: React.FC<ApplicationSetupProps> = ({
         </CardFooter>
       </Card>
 
-      {applications.length > 0 && (
-        <Card className="shadow-lg">
-          <CardHeader>
-            <div className="flex items-center gap-2">
-                <AppWindow className="h-8 w-8 text-primary" />
-                <CardTitle className="font-headline text-2xl">Configured Applications</CardTitle>
-            </div>
-          </CardHeader>
-          <CardContent>
+      <Card className="shadow-lg">
+        <CardHeader>
+          <div className="flex items-center gap-2">
+              <AppWindow className="h-8 w-8 text-primary" />
+              <CardTitle className="font-headline text-2xl">Configured Applications</CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {applications.length > 0 ? (
             <ScrollArea className="max-h-[500px]">
               <Table>
                 <TableHeader>
@@ -305,14 +306,19 @@ const ApplicationSetup: React.FC<ApplicationSetupProps> = ({
                 </TableBody>
               </Table>
             </ScrollArea>
-          </CardContent>
-           {applications.length > 0 && (
-                <CardFooter>
-                    <p className="text-sm text-muted-foreground">Select an application to start the file synchronization process, or manage existing applications.</p>
-                </CardFooter>
-            )}
-        </Card>
-      )}
+          ) : (
+            <p className="text-sm text-muted-foreground text-center py-4">
+              No applications configured yet. Add an application using the form above.
+            </p>
+          )}
+        </CardContent>
+        {applications.length > 0 && (
+          <CardFooter>
+              <p className="text-sm text-muted-foreground">Select an application to start the file synchronization process, or manage existing applications.</p>
+          </CardFooter>
+        )}
+      </Card>
+
       {appToDelete && (
         <AlertDialog open={!!appToDelete} onOpenChange={(open) => !open && setAppToDelete(null)}>
           <AlertDialogContent>
@@ -339,3 +345,5 @@ const ApplicationSetup: React.FC<ApplicationSetupProps> = ({
 };
 
 export default ApplicationSetup;
+
+    
