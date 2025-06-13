@@ -10,7 +10,7 @@ interface FileItemProps {
   onSelectFile: (node: FileNode) => void;
   onToggleDirectory: (node: FileNode) => void;
   depth: number;
-  selectedFilePath?: string | null; // Changed from isSelected to selectedFilePath
+  selectedFilePath?: string | null; 
 }
 
 const FileItem: React.FC<FileItemProps> = ({ node, onSelectFile, onToggleDirectory, depth, selectedFilePath }) => {
@@ -46,11 +46,17 @@ const FileItem: React.FC<FileItemProps> = ({ node, onSelectFile, onToggleDirecto
   const handleItemClick = () => {
     if (node.type === 'file') {
       onSelectFile(node);
-    } else { // directory
+    } else { 
       onToggleDirectory(node);
     }
   };
   
+  // Diagnostic log
+  if (node.type === 'directory') {
+    console.log(`[FileItem] Dir: ${node.name}, isOpen: ${node.isOpen}, Children: ${Array.isArray(node.children) ? node.children.length : typeof node.children}`);
+  }
+
+
   return (
     <div className="flex flex-col">
       <div
@@ -85,7 +91,7 @@ const FileItem: React.FC<FileItemProps> = ({ node, onSelectFile, onToggleDirecto
               onSelectFile={onSelectFile}
               onToggleDirectory={onToggleDirectory}
               depth={depth + 1}
-              selectedFilePath={selectedFilePath} // Pass selectedFilePath down
+              selectedFilePath={selectedFilePath} 
             />
           ))}
         </div>

@@ -25,12 +25,15 @@ const isValidPath = (targetPath: string): boolean => {
 export async function POST(request: NextRequest) {
   try {
     const { targetPath } = await request.json();
+    console.log(`[API /api/list-files] Received request for targetPath: ${targetPath}`); // Logging
 
     if (!targetPath || typeof targetPath !== 'string') {
+      console.error(`[API /api/list-files] Invalid targetPath: ${targetPath}`);
       return NextResponse.json({ error: 'targetPath is required and must be a string' }, { status: 400 });
     }
 
     if (!isValidPath(targetPath)) {
+      console.error(`[API /api/list-files] Invalid or unsafe targetPath format: ${targetPath}`);
       return NextResponse.json({ error: 'Invalid targetPath format or potentially unsafe path.' }, { status: 400 });
     }
 
@@ -43,6 +46,7 @@ export async function POST(request: NextRequest) {
         '-File', scriptPath,
         '-RootPath', targetPath
     ];
+    console.log(`[API /api/list-files] Executing PowerShell with args: powershell.exe ${psArgs.join(' ')}`); // Logging
 
     return new Promise((resolve) => {
       const psProcess = spawn('powershell.exe', psArgs, { stdio: ['ignore', 'pipe', 'pipe'] }); // stdin, stdout, stderr
@@ -59,13 +63,13 @@ export async function POST(request: NextRequest) {
       });
 
       psProcess.on('error', (err) => {
-        console.error('Failed to start PowerShell process for list-files:', err.message);
+        console.error('[API /api/list-files] Failed to start PowerShell process:', err.message);
         resolve(NextResponse.json({ error: 'Failed to start PowerShell process', details: err.message }, { status: 500 }));
       });
 
       psProcess.on('exit', (code) => {
         if (stderrData && code !== 0) {
-            console.error(`PowerShell script STDERR for list-files (${targetPath}): ${stderrData}`);
+            console.error(`[API /api/list-files] PowerShell script STDERR for (${targetPath}): ${stderrData}`);
         }
         if (code === 0) {
           try {
@@ -74,18 +78,18 @@ export async function POST(request: NextRequest) {
             const files: FileNode[] = JSON.parse(stdoutData);
             resolve(NextResponse.json(files));
           } catch (parseError) {
-            console.error('Failed to parse PowerShell output for list-files:', parseError, 'Raw output:', stdoutData);
+            console.error('[API /api/list-files] Failed to parse PowerShell output:', parseError, 'Raw output:', stdoutData.substring(0, 1000)); // Log more raw output
             resolve(NextResponse.json({ error: 'Failed to parse script output', details: (parseError as Error).message, rawOutput: stdoutData.substring(0, 500) }, { status: 500 }));
           }
         } else {
-          console.warn(`list-files script for ${targetPath} exited with code ${code}. Output: ${stdoutData}. Errors: ${stderrData}`);
+          console.warn(`[API /api/list-files] script for ${targetPath} exited with code ${code}. Output: ${stdoutData.substring(0,1000)}. Errors: ${stderrData}`);
           resolve(NextResponse.json({ error: `Script exited with code ${code}`, details: stderrData.trim() || stdoutData.trim() }, { status: 500 }));
         }
       });
     });
 
   } catch (error) {
-    console.error('list-files API error:', error);
+    console.error('[API /api/list-files] API error:', error);
     return NextResponse.json({ error: 'Failed to list files', details: (error as Error).message }, { status: 500 });
   }
 }
