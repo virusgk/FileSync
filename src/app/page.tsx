@@ -47,6 +47,7 @@ export default function FileSyncPage() {
   const [isServerConfigListLoading, setIsServerConfigListLoading] = useState<boolean>(true);
   const [isServerConfigLoading, setIsServerConfigLoading] = useState<boolean>(false);
   const [isSavingConfiguration, setIsSavingConfiguration] = useState<boolean>(false);
+  const [isDeletingConfig, setIsDeletingConfig] = useState<boolean>(false);
 
 
   // File Sync UI State
@@ -70,7 +71,6 @@ export default function FileSyncPage() {
     setSyncLog(prev => [...prev, { id: Date.now().toString(), timestamp: new Date().toISOString(), message, status }]);
   };
 
-  // Fetch available configurations from server
   const fetchAvailableConfigs = useCallback(async () => {
     setIsServerConfigListLoading(true);
     try {
@@ -92,7 +92,6 @@ export default function FileSyncPage() {
   }, [fetchAvailableConfigs]);
 
 
-  // Configuration Management - Server-side
   const handleSaveConfigurationToServer = async () => {
     setIsSavingConfiguration(true);
     const configBundle: AppConfigurationBundle = {
@@ -115,7 +114,7 @@ export default function FileSyncPage() {
       }
       const result = await response.json();
       toast({ title: "Configuration Saved", description: `Successfully saved as ${result.filename} on the server.` });
-      await fetchAvailableConfigs(); // Refresh the list
+      await fetchAvailableConfigs(); 
     } catch (error) {
       console.error("Error saving configuration to server:", error);
       toast({ title: "Save Error", description: (error as Error).message, variant: "destructive" });
@@ -136,21 +135,18 @@ export default function FileSyncPage() {
     setAssignedDrServers(loadedConfig.assignedDrServers || []);
     setApplications(loadedConfig.applications || []);
     
-    // Critical: Ensure ServerAssignment gets ALL raw servers for proper DND functioning
     const allRawServersFromConfig = [...(loadedConfig.rawPrimaryServers || []), ...(loadedConfig.rawDrServers || [])];
     setAvailableServersForAssignment(allRawServersFromConfig);
 
-    // If there are assigned servers or applications, move to the appropriate stage
     if (loadedConfig.applications && loadedConfig.applications.length > 0) {
         setCurrentStage(ConfigStage.APP_CONFIGURATION);
     } else if ((loadedConfig.assignedPrimaryServers && loadedConfig.assignedPrimaryServers.length > 0) || (loadedConfig.assignedDrServers && loadedConfig.assignedDrServers.length > 0)) {
         setCurrentStage(ConfigStage.SERVER_ASSIGNMENT);
     } else {
-         // If only raw servers are present, stay in SERVER_INPUT or move to SERVER_ASSIGNMENT if any raw servers exist.
         if (allRawServersFromConfig.length > 0) {
              setCurrentStage(ConfigStage.SERVER_ASSIGNMENT);
         } else {
-             setCurrentStage(ConfigStage.SERVER_INPUT); // Stay on server input if config is effectively empty
+             setCurrentStage(ConfigStage.SERVER_INPUT);
         }
     }
     toast({ title: "Configuration Loaded", description: "System configuration has been applied." });
@@ -175,7 +171,6 @@ export default function FileSyncPage() {
     }
   };
 
-  // Handles file uploaded via input, saves it to server, then applies it
   const handleFileUploadAndSave = async (file: File) => {
     const reader = new FileReader();
     reader.onload = async (e) => {
@@ -183,13 +178,11 @@ export default function FileSyncPage() {
         const text = e.target?.result as string;
         const loadedConfig: AppConfigurationBundle = JSON.parse(text);
         
-        // Validate before saving to server
         if (loadedConfig.version !== CONFIG_VERSION) {
             toast({ title: "Import Error", description: `Configuration version mismatch. Expected ${CONFIG_VERSION}, got ${loadedConfig.version}. File not saved to server.`, variant: "destructive"});
             return;
         }
 
-        // Save to server
         const saveResponse = await fetch('/api/configurations', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -203,8 +196,8 @@ export default function FileSyncPage() {
         const saveResult = await saveResponse.json();
         toast({ title: "Upload Successful", description: `Configuration from file '${file.name}' saved as '${saveResult.filename}' on server and applied.` });
         
-        applyLoadedConfig(loadedConfig); // Apply the config AFTER successful save
-        await fetchAvailableConfigs(); // Refresh list from server
+        applyLoadedConfig(loadedConfig); 
+        await fetchAvailableConfigs(); 
 
       } catch (error) {
         console.error("Error processing uploaded configuration:", error);
@@ -212,6 +205,26 @@ export default function FileSyncPage() {
       }
     };
     reader.readAsText(file);
+  };
+
+  const handleDeleteConfigFromServer = async (filename: string) => {
+    setIsDeletingConfig(true);
+    try {
+      const response = await fetch(`/api/configurations/${filename}`, {
+        method: 'DELETE',
+      });
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `Failed to delete configuration '${filename}'`);
+      }
+      toast({ title: "Configuration Deleted", description: `Configuration '${filename}' has been deleted from the server.` });
+      await fetchAvailableConfigs(); // Refresh the list
+    } catch (error) {
+      console.error(`Error deleting configuration ${filename} from server:`, error);
+      toast({ title: "Delete Error", description: (error as Error).message, variant: "destructive" });
+    } finally {
+      setIsDeletingConfig(false);
+    }
   };
 
 
@@ -230,9 +243,9 @@ export default function FileSyncPage() {
     setRawPrimaryServers(newRawPrimary);
     setRawDrServers(newRawDr);
     setAvailableServersForAssignment([...newRawPrimary, ...newRawDr]);
-    setAssignedPrimaryServers([]); // Reset assignments
-    setAssignedDrServers([]);     // Reset assignments
-    setApplications([]);          // Reset applications
+    setAssignedPrimaryServers([]); 
+    setAssignedDrServers([]);     
+    setApplications([]);          
     setSelectedApplicationForSync(null);
     setCurrentStage(ConfigStage.SERVER_ASSIGNMENT);
     toast({ title: "Servers Entered", description: "Proceed to assign servers." });
@@ -398,7 +411,7 @@ export default function FileSyncPage() {
   const simulateSync = async (fileDiff: FileDifference) => {
     if (!selectedApplicationForSync) return { newPrimaryFiles: primaryFiles, newDrFiles: drFiles };
     addLogEntry(`Syncing ${fileDiff.path} (Primary to DR) for ${selectedApplicationForSync.name}...`, 'info');
-    await new Promise(resolve => setTimeout(resolve, 500)); // Shorter delay for individual sync
+    await new Promise(resolve => setTimeout(resolve, 500)); 
 
     let newPrimaryFiles = JSON.parse(JSON.stringify(primaryFiles)) as FileNode[];
     let newDrFiles = JSON.parse(JSON.stringify(drFiles)) as FileNode[];
@@ -539,9 +552,11 @@ export default function FileSyncPage() {
               onFileUpload={handleFileUploadAndSave}
               availableServerConfigs={availableServerConfigs}
               onLoadConfigFromServer={handleLoadConfigFromServer}
+              onDeleteConfigFromServer={handleDeleteConfigFromServer}
               isServerConfigListLoading={isServerConfigListLoading}
               isServerConfigLoading={isServerConfigLoading}
-              key={`server-input-${availableServerConfigs.join('-')}`} // Force re-render if list changes
+              isDeletingConfig={isDeletingConfig}
+              key={`server-input-${availableServerConfigs.join('-')}`} 
             />
           )}
 
