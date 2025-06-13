@@ -9,20 +9,33 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, DragEndEvent, DragOverlay, DropAnimation, defaultDropAnimationSideEffects } from '@dnd-kit/core';
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { GripVertical, ServerIcon as DefaultServerIcon, Shuffle, CheckCircle, XCircle, RefreshCw, AlertCircle } from 'lucide-react'; // Renamed Server to DefaultServerIcon to avoid conflict
+import { GripVertical, ServerIcon as DefaultServerIcon, Shuffle, CheckCircle, XCircle, RefreshCw, AlertCircle } from 'lucide-react';
+import { useToast } from "@/hooks/use-toast";
+
 
 interface DraggableItemProps {
   server: RawServer | AssignedServer;
   isOverlay?: boolean;
 }
 
-const mockCheckServerReachability = (serverName: string): Promise<boolean> => {
-  return new Promise(resolve => {
-    setTimeout(() => {
-      // Simulate ~80% success rate
-      resolve(Math.random() < 0.8);
-    }, 1000 + Math.random() * 1000); // Simulate network delay
-  });
+const checkServerReachabilityAPI = async (serverName: string): Promise<boolean> => {
+    try {
+      const response = await fetch('/api/check-reachability', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ host: serverName, port: 22 }), // Assuming SSH port 22 for general check
+      });
+      if (!response.ok) {
+        const errorData = await response.json();
+        console.error(`Reachability API error for ${serverName}:`, errorData.details || response.statusText);
+        return false;
+      }
+      const data = await response.json();
+      return data.reachable;
+    } catch (error) {
+      console.error(`Failed to fetch reachability for ${serverName}:`, error);
+      return false;
+    }
 };
 
 
@@ -45,7 +58,6 @@ const DraggableServerItem: React.FC<DraggableItemProps & ReturnType<typeof useSo
   };
 
   const assignedInfo = isAssigned ? assignedServerDetails : null;
-  // Determine original type for display, more reliably
   let originalType: 'primary' | 'dr' | undefined = undefined;
   if (!isAssigned && (server as RawServer).type) {
     originalType = (server as RawServer).type;
@@ -71,10 +83,10 @@ const DraggableServerItem: React.FC<DraggableItemProps & ReturnType<typeof useSo
       <div className="flex items-center gap-2">
         {isAssigned && assignedInfo && (
           <>
-            {assignedInfo.isCheckingReachability && <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground" />}
-            {assignedInfo.isReachable === true && <CheckCircle className="h-4 w-4 text-green-500" />}
-            {assignedInfo.isReachable === false && <XCircle className="h-4 w-4 text-red-500" />}
-            {assignedInfo.isReachable === null && !assignedInfo.isCheckingReachability && <AlertCircle className="h-4 w-4 text-yellow-500" />}
+            {assignedInfo.isCheckingReachability && <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground" title="Checking reachability..." />}
+            {assignedInfo.isReachable === true && <CheckCircle className="h-4 w-4 text-green-500" title="Server is reachable" />}
+            {assignedInfo.isReachable === false && <XCircle className="h-4 w-4 text-red-500" title="Server is unreachable" />}
+            {assignedInfo.isReachable === null && !assignedInfo.isCheckingReachability && <AlertCircle className="h-4 w-4 text-yellow-500" title="Reachability status unknown" />}
           </>
         )}
         {!isAssigned && <DefaultServerIcon className="h-4 w-4 text-muted-foreground" />}
@@ -139,6 +151,7 @@ const ServerAssignment: React.FC<ServerAssignmentProps> = ({
   const [primaryZone, setPrimaryZone] = useState<AssignedServer[]>(initialPrimaryServers);
   const [drZone, setDrZone] = useState<AssignedServer[]>(initialDrServers);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const { toast } = useToast();
 
   useEffect(() => {
     const assignedOriginalIds = new Set([
@@ -155,10 +168,15 @@ const ServerAssignment: React.FC<ServerAssignmentProps> = ({
     const setZone = zone === 'primary' ? setPrimaryZone : setDrZone;
     setZone(prev => prev.map(s => s.id === serverId ? { ...s, isCheckingReachability: true, isReachable: null } : s));
     
-    const isReachable = await mockCheckServerReachability(serverName);
+    const isReachable = await checkServerReachabilityAPI(serverName);
     
     setZone(prev => prev.map(s => s.id === serverId ? { ...s, isReachable, isCheckingReachability: false } : s));
-  }, []);
+    toast({
+        title: `Reachability: ${serverName}`,
+        description: isReachable ? "Server is reachable." : "Server is unreachable.",
+        variant: isReachable ? "default" : "destructive",
+    });
+  }, [toast]);
 
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
@@ -217,30 +235,24 @@ const ServerAssignment: React.FC<ServerAssignmentProps> = ({
     const serverToMove = sourceList.find(s => s.id === activeServerId);
     if (!serverToMove) return;
     
-    if (active.id === over.id) return; // Dropped on itself
+    if (active.id === over.id && !isOverUnassignedZoneContainer && !isOverPrimaryZoneContainer && !isOverDrZoneContainer) return; // Dropped on itself, not a zone container
+
 
     // Reordering within the same list
-    if ((sourceZoneType === 'unassigned' && isOverUnassignedZone) ||
-        (sourceZoneType === 'primary' && isOverPrimaryZone) ||
-        (sourceZoneType === 'dr' && isOverDrZone)) {
+    if ((sourceZoneType === 'unassigned' && isOverUnassignedZone && !isOverUnassignedZoneContainer) ||
+        (sourceZoneType === 'primary' && isOverPrimaryZone && !isOverPrimaryZoneContainer) ||
+        (sourceZoneType === 'dr' && isOverDrZone && !isOverDrZoneContainer)) {
       
       const oldIndex = sourceList.findIndex(s => s.id === active.id);
       let newIndex = sourceList.findIndex(s => s.id === over.id);
-
-      if (newIndex === -1) { // Dropped on the zone container, not an item
-          if (isOverUnassignedZoneContainer && sourceZoneType === 'unassigned') newIndex = unassigned.length -1;
-          else if (isOverPrimaryZoneContainer && sourceZoneType === 'primary') newIndex = primaryZone.length -1;
-          else if (isOverDrZoneContainer && sourceZoneType === 'dr') newIndex = drZone.length -1;
-          else return; // Should not happen if logic is correct
-      }
-      
+       
       if (oldIndex !== -1 && newIndex !== -1) {
           setSourceListState((prev: any[]) => arrayMove(prev, oldIndex, newIndex));
       }
       return;
     }
     
-    // Moving between lists
+    // Moving between lists or to an empty zone container
     setSourceListState((prev: any[]) => prev.filter(s => s.id !== activeServerId)); 
     
     if (isOverPrimaryZone) { 
@@ -251,7 +263,16 @@ const ServerAssignment: React.FC<ServerAssignmentProps> = ({
         isReachable: null,
         isCheckingReachability: false,
       };
-      setPrimaryZone(prev => [...prev, assignedInstance]); // For simplicity, append. Could refine to insert at overId index.
+      const overItemIndex = primaryZone.findIndex(item => item.id === over.id);
+      setPrimaryZone(prev => {
+        const newItems = [...prev];
+        if (over.id && over.id !== 'primary-zone' && overItemIndex !== -1) {
+             newItems.splice(overItemIndex, 0, assignedInstance);
+        } else {
+            newItems.push(assignedInstance);
+        }
+        return newItems;
+      });
       performReachabilityCheck(assignedInstance.id, assignedInstance.name, 'primary');
 
     } else if (isOverDrZone) { 
@@ -262,7 +283,16 @@ const ServerAssignment: React.FC<ServerAssignmentProps> = ({
         isReachable: null,
         isCheckingReachability: false,
       };
-      setDrZone(prev => [...prev, assignedInstance]); // Append
+      const overItemIndex = drZone.findIndex(item => item.id === over.id);
+      setDrZone(prev => {
+        const newItems = [...prev];
+        if (over.id && over.id !== 'dr-zone' && overItemIndex !== -1) {
+            newItems.splice(overItemIndex, 0, assignedInstance);
+        } else {
+            newItems.push(assignedInstance);
+        }
+        return newItems;
+      });
       performReachabilityCheck(assignedInstance.id, assignedInstance.name, 'dr');
 
     } else if (isOverUnassignedZone) { 
@@ -273,25 +303,37 @@ const ServerAssignment: React.FC<ServerAssignmentProps> = ({
         if (originalRawServerDetails) {
           setUnassigned(prevUnassigned => {
             if (prevUnassigned.some(s => s.id === originalRawServerDetails!.id)) {
-              return prevUnassigned;
-            }
+              // If it already exists (e.g., from a rapid drag back and forth), don't re-add, but ensure order if dropped on specific item
+              const currentIdx = prevUnassigned.findIndex(s => s.id === originalRawServerDetails!.id);
+              let newItems = [...prevUnassigned];
+              if (currentIdx !== -1) newItems.splice(currentIdx,1); // remove current instance
 
-            const overItemIndex = prevUnassigned.findIndex(item => item.id === over.id);
-
-            if (over.id && over.id !== 'unassigned-zone' && overItemIndex !== -1) {
-              const newItems = [...prevUnassigned];
-              newItems.splice(overItemIndex, 0, originalRawServerDetails!);
+              const overItemIndex = newItems.findIndex(item => item.id === over.id);
+              if (over.id && over.id !== 'unassigned-zone' && overItemIndex !== -1) {
+                newItems.splice(overItemIndex, 0, originalRawServerDetails!);
+              } else {
+                newItems.push(originalRawServerDetails!);
+              }
               return newItems;
-            } else {
-              return [...prevUnassigned, originalRawServerDetails!]; 
             }
+
+            // Add new item
+            let newItems = [...prevUnassigned];
+            const overItemIndex = newItems.findIndex(item => item.id === over.id);
+            if (over.id && over.id !== 'unassigned-zone' && overItemIndex !== -1) {
+              newItems.splice(overItemIndex, 0, originalRawServerDetails!);
+            } else {
+              newItems.push(originalRawServerDetails!);
+            }
+            return newItems;
           });
         } else {
           console.error("CRITICAL: Original RawServer not found in availableServers for ID:", assignedServerBeingMoved.originalRawServerId);
+          toast({ title: "Error", description: "Could not find original server details. This should not happen.", variant: "destructive"});
           const reconstructedRawServer: RawServer = { 
               id: assignedServerBeingMoved.originalRawServerId,
               name: assignedServerBeingMoved.name,
-              type: assignedServerBeingMoved.originalRawServerId.includes('_primary_') ? 'primary' : (assignedServerBeingMoved.originalRawServerId.includes('_dr_') ? 'dr' : 'primary')
+              type: assignedServerBeingMoved.originalRawServerId.includes('_primary_') ? 'primary' : (assignedServerBeingMoved.originalRawServerId.includes('_dr_') ? 'dr' : 'primary') // Best guess
           };
           setUnassigned(prevUnassigned => [...prevUnassigned, reconstructedRawServer]);
         }
@@ -313,7 +355,7 @@ const ServerAssignment: React.FC<ServerAssignmentProps> = ({
             <CardTitle className="font-headline text-2xl">Step 2: Assign Servers</CardTitle>
         </div>
         <CardDescription>
-          Drag servers from the "Available Servers" pool to the "Primary Servers" or "DR Servers" zones. Server reachability will be checked upon assignment. You can drag assigned servers back to make them available again.
+          Drag servers from the "Available Servers" pool to the "Primary Servers" or "DR Servers" zones. Server reachability will be checked via API (port 22 by default). You can drag assigned servers back to make them available again.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -359,6 +401,3 @@ const ServerAssignment: React.FC<ServerAssignmentProps> = ({
 };
 
 export default ServerAssignment;
-    
-
-    

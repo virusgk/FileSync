@@ -20,7 +20,7 @@ export interface FileNode {
 export interface FileDifference {
   path: string; // relative path of the file
   name: string;
-  status: 'different' | 'primary_only' | 'dr_only' | 'synced'; // Added 'synced' for detail view consistency
+  status: 'different' | 'primary_only' | 'dr_only' | 'synced';
   primaryFile?: FileNode;
   drFile?: FileNode;
   summary?: string; // Text summary of difference
@@ -33,28 +33,27 @@ export interface SyncLogEntry {
   status: 'success' | 'error' | 'info';
 }
 
-// New types for server and application configuration
 export interface RawServer {
-  id: string; // Unique ID for the raw server input, e.g., "raw_primary_0_serverA"
+  id: string;
   name: string;
-  type: 'primary' | 'dr'; // Indicates if it was entered in primary or DR list
+  type: 'primary' | 'dr';
 }
 
 export interface AssignedServer {
-  id: string; // Unique ID for the assigned server instance, e.g., "assigned_guid"
+  id: string; 
   name: string;
-  originalRawServerId: string; // ID of the RawServer it came from
-  isReachable?: boolean | null; // null for unchecked, true for reachable, false for not
-  isCheckingReachability?: boolean;
+  originalRawServerId: string;
+  isReachable: boolean | null; // null for unchecked, true for reachable, false for not
+  isCheckingReachability: boolean;
 }
 
 export interface Application {
-  id: string; // Unique ID for the application, e.g., "app_guid"
+  id: string;
   name: string;
-  primaryServerIds: string[]; // List of AssignedServer IDs
-  drServerIds: string[];     // List of AssignedServer IDs
-  primaryPath: string;       // Path for primary servers for this application
-  drPath: string;            // Path for DR servers for this application
+  primaryServerIds: string[]; 
+  drServerIds: string[];     
+  primaryPath: string;       
+  drPath: string;            
 }
 
 export interface AppConfigurationBundle {
@@ -63,5 +62,5 @@ export interface AppConfigurationBundle {
   assignedPrimaryServers: AssignedServer[];
   assignedDrServers: AssignedServer[];
   applications: Application[];
-  version: string; // To handle future schema changes
+  version: string; 
 }

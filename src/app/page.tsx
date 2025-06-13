@@ -19,7 +19,7 @@ import { generateMockFiles, compareFileTrees, addNodeToTree, removeNodeFromTree,
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Upload, Download } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 
 const CONFIG_VERSION = "1.0";
 
@@ -33,23 +33,25 @@ enum ConfigStage {
 export default function FileSyncPage() {
   const [currentStage, setCurrentStage] = useState<ConfigStage>(ConfigStage.SERVER_INPUT);
 
-  // Stage 1: Server Input
+  // Server and App Configuration State
   const [rawPrimaryServers, setRawPrimaryServers] = useState<RawServer[]>([]);
   const [rawDrServers, setRawDrServers] = useState<RawServer[]>([]);
-
-  // Stage 2: Server Assignment
   const [availableServersForAssignment, setAvailableServersForAssignment] = useState<RawServer[]>([]);
   const [assignedPrimaryServers, setAssignedPrimaryServers] = useState<AssignedServer[]>([]);
   const [assignedDrServers, setAssignedDrServers] = useState<AssignedServer[]>([]);
-
-  // Stage 3: Application Configuration
   const [applications, setApplications] = useState<Application[]>([]);
   const [selectedApplicationForSync, setSelectedApplicationForSync] = useState<Application | null>(null);
 
-  // Stage 4: File Sync
+  // Server-side configuration list
+  const [availableServerConfigs, setAvailableServerConfigs] = useState<string[]>([]);
+  const [isServerConfigListLoading, setIsServerConfigListLoading] = useState<boolean>(true);
+  const [isServerConfigLoading, setIsServerConfigLoading] = useState<boolean>(false);
+  const [isSavingConfiguration, setIsSavingConfiguration] = useState<boolean>(false);
+
+
+  // File Sync UI State
   const [primaryPath, setPrimaryPath] = useState<string>('');
   const [drPath, setDrPath] = useState<string>('');
-  
   const [primaryFiles, setPrimaryFiles] = useState<FileNode[]>([]);
   const [drFiles, setDrFiles] = useState<FileNode[]>([]);
   const [differences, setDifferences] = useState<FileDifference[]>([]);
@@ -63,14 +65,36 @@ export default function FileSyncPage() {
   const [isSyncingAll, setIsSyncingAll] = useState<boolean>(false);
 
   const { toast } = useToast();
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const addLogEntry = (message: string, status: SyncLogEntry['status']) => {
     setSyncLog(prev => [...prev, { id: Date.now().toString(), timestamp: new Date().toISOString(), message, status }]);
   };
 
-  // Configuration Management
-  const handleDownloadConfiguration = () => {
+  // Fetch available configurations from server
+  const fetchAvailableConfigs = useCallback(async () => {
+    setIsServerConfigListLoading(true);
+    try {
+      const response = await fetch('/api/configurations');
+      if (!response.ok) throw new Error('Failed to fetch configurations');
+      const data = await response.json();
+      setAvailableServerConfigs(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error("Error fetching server configurations:", error);
+      toast({ title: "Config List Error", description: (error as Error).message, variant: "destructive" });
+      setAvailableServerConfigs([]);
+    } finally {
+      setIsServerConfigListLoading(false);
+    }
+  }, [toast]);
+
+  useEffect(() => {
+    fetchAvailableConfigs();
+  }, [fetchAvailableConfigs]);
+
+
+  // Configuration Management - Server-side
+  const handleSaveConfigurationToServer = async () => {
+    setIsSavingConfiguration(true);
     const configBundle: AppConfigurationBundle = {
       rawPrimaryServers,
       rawDrServers,
@@ -79,45 +103,107 @@ export default function FileSyncPage() {
       applications,
       version: CONFIG_VERSION,
     };
-    const jsonString = JSON.stringify(configBundle, null, 2);
-    const blob = new Blob([jsonString], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `filesync_config_${new Date().toISOString().split('T')[0]}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    toast({ title: "Configuration Downloaded", description: "Your current setup has been saved." });
+    try {
+      const response = await fetch('/api/configurations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(configBundle),
+      });
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to save configuration to server');
+      }
+      const result = await response.json();
+      toast({ title: "Configuration Saved", description: `Successfully saved as ${result.filename} on the server.` });
+      await fetchAvailableConfigs(); // Refresh the list
+    } catch (error) {
+      console.error("Error saving configuration to server:", error);
+      toast({ title: "Save Error", description: (error as Error).message, variant: "destructive" });
+    } finally {
+      setIsSavingConfiguration(false);
+    }
   };
 
-  const handleFileUpload = (file: File) => {
+  const applyLoadedConfig = (loadedConfig: AppConfigurationBundle) => {
+    if (loadedConfig.version !== CONFIG_VERSION) {
+        toast({ title: "Import Error", description: `Configuration version mismatch. Expected ${CONFIG_VERSION}, got ${loadedConfig.version || 'unknown'}.`, variant: "destructive"});
+        return;
+    }
+
+    setRawPrimaryServers(loadedConfig.rawPrimaryServers || []);
+    setRawDrServers(loadedConfig.rawDrServers || []);
+    setAssignedPrimaryServers(loadedConfig.assignedPrimaryServers || []);
+    setAssignedDrServers(loadedConfig.assignedDrServers || []);
+    setApplications(loadedConfig.applications || []);
+    
+    // Critical: Ensure ServerAssignment gets ALL raw servers for proper DND functioning
+    const allRawServersFromConfig = [...(loadedConfig.rawPrimaryServers || []), ...(loadedConfig.rawDrServers || [])];
+    setAvailableServersForAssignment(allRawServersFromConfig);
+
+    // If there are assigned servers or applications, move to the appropriate stage
+    if (loadedConfig.applications && loadedConfig.applications.length > 0) {
+        setCurrentStage(ConfigStage.APP_CONFIGURATION);
+    } else if ((loadedConfig.assignedPrimaryServers && loadedConfig.assignedPrimaryServers.length > 0) || (loadedConfig.assignedDrServers && loadedConfig.assignedDrServers.length > 0)) {
+        setCurrentStage(ConfigStage.SERVER_ASSIGNMENT);
+    } else {
+        setCurrentStage(ConfigStage.SERVER_ASSIGNMENT); // Default to assignment if only raw servers
+    }
+    toast({ title: "Configuration Loaded", description: "System configuration has been applied." });
+  };
+
+  const handleLoadConfigFromServer = async (filename: string) => {
+    if (!filename) return;
+    setIsServerConfigLoading(true);
+    try {
+      const response = await fetch(`/api/configurations/${filename}`);
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `Failed to load configuration '${filename}'`);
+      }
+      const loadedConfig = await response.json();
+      applyLoadedConfig(loadedConfig);
+    } catch (error) {
+      console.error(`Error loading configuration ${filename} from server:`, error);
+      toast({ title: "Load Error", description: (error as Error).message, variant: "destructive" });
+    } finally {
+      setIsServerConfigLoading(false);
+    }
+  };
+
+  // Handles file uploaded via input, saves it to server, then applies it
+  const handleFileUploadAndSave = async (file: File) => {
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       try {
         const text = e.target?.result as string;
         const loadedConfig: AppConfigurationBundle = JSON.parse(text);
         
+        // Validate before saving to server
         if (loadedConfig.version !== CONFIG_VERSION) {
-            toast({ title: "Import Error", description: `Configuration version mismatch. Expected ${CONFIG_VERSION}, got ${loadedConfig.version}.`, variant: "destructive"});
+            toast({ title: "Import Error", description: `Configuration version mismatch. Expected ${CONFIG_VERSION}, got ${loadedConfig.version}. File not saved to server.`, variant: "destructive"});
             return;
         }
 
-        setRawPrimaryServers(loadedConfig.rawPrimaryServers || []);
-        setRawDrServers(loadedConfig.rawDrServers || []);
-        setAssignedPrimaryServers(loadedConfig.assignedPrimaryServers || []);
-        setAssignedDrServers(loadedConfig.assignedDrServers || []);
-        setApplications(loadedConfig.applications || []);
-        
-        const allRawServers = [...(loadedConfig.rawPrimaryServers || []), ...(loadedConfig.rawDrServers || [])];
-        setAvailableServersForAssignment(allRawServers); // Pass ALL raw servers to ServerAssignment
+        // Save to server
+        const saveResponse = await fetch('/api/configurations', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(loadedConfig),
+        });
 
-        setCurrentStage(ConfigStage.SERVER_ASSIGNMENT); 
-        toast({ title: "Configuration Loaded", description: "System configuration has been imported successfully." });
+        if (!saveResponse.ok) {
+            const errorData = await saveResponse.json();
+            throw new Error(errorData.error || 'Failed to save uploaded configuration to server');
+        }
+        const saveResult = await saveResponse.json();
+        toast({ title: "Upload Successful", description: `Configuration from file '${file.name}' saved as '${saveResult.filename}' on server and applied.` });
+        
+        applyLoadedConfig(loadedConfig); // Apply the config AFTER successful save
+        await fetchAvailableConfigs(); // Refresh list from server
+
       } catch (error) {
-        console.error("Error loading configuration:", error);
-        toast({ title: "Import Error", description: "Failed to parse or apply the configuration file.", variant: "destructive" });
+        console.error("Error processing uploaded configuration:", error);
+        toast({ title: "Upload & Save Error", description: (error as Error).message, variant: "destructive" });
       }
     };
     reader.readAsText(file);
@@ -128,7 +214,7 @@ export default function FileSyncPage() {
   const handleServerInputSubmit = (primaryNames: string[], drNames: string[]) => {
     const createRawServers = (names: string[], type: 'primary' | 'dr'): RawServer[] =>
       names.filter(name => name.trim() !== '').map((name, index) => ({
-        id: `raw_${type}_${index}_${name.trim().replace(/\s+/g, '_')}_${Date.now()}`, // Ensure unique IDs
+        id: `raw_${type}_${index}_${name.trim().replace(/\s+/g, '_')}_${Date.now()}`,
         name: name.trim(),
         type,
       }));
@@ -139,7 +225,6 @@ export default function FileSyncPage() {
     setRawPrimaryServers(newRawPrimary);
     setRawDrServers(newRawDr);
     setAvailableServersForAssignment([...newRawPrimary, ...newRawDr]);
-    // Reset further stages if new input is submitted
     setAssignedPrimaryServers([]);
     setAssignedDrServers([]);
     setApplications([]);
@@ -307,86 +392,113 @@ export default function FileSyncPage() {
   const simulateSync = async (fileDiff: FileDifference) => {
     if (!selectedApplicationForSync) return;
     addLogEntry(`Syncing ${fileDiff.path} (Primary to DR) for ${selectedApplicationForSync.name}...`, 'info');
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await new Promise(resolve => setTimeout(resolve, 500)); // Shorter delay for individual sync
 
-    let newPrimaryFiles = [...primaryFiles];
-    let newDrFiles = [...drFiles];
+    let newPrimaryFiles = JSON.parse(JSON.stringify(primaryFiles)) as FileNode[];
+    let newDrFiles = JSON.parse(JSON.stringify(drFiles)) as FileNode[];
 
     const pFile = fileDiff.primaryFile;
     const dFile = fileDiff.drFile;
 
-    const updateStatusInPrimaryTree = (tree: FileNode[], relPath: string, newStatus: FileNode['status']): FileNode[] => 
-      tree.map(n => {
+    const updateStatusInTreeRecursive = (nodes: FileNode[], relPath: string, newStatus: FileNode['status']): FileNode[] => 
+      nodes.map(n => {
         if (n.relativePath === relPath) return {...n, status: newStatus};
-        if (n.children) return {...n, children: updateStatusInPrimaryTree(n.children, relPath, newStatus)};
+        if (n.children) return {...n, children: updateStatusInTreeRecursive(n.children, relPath, newStatus)};
         return n;
       });
 
     switch (fileDiff.status) {
       case 'primary_only':
         if (pFile) {
-          newDrFiles = addNodeToTree(drFiles, selectedApplicationForSync.drPath, pFile);
-          newPrimaryFiles = updateStatusInPrimaryTree(primaryFiles, pFile.relativePath, 'synced');
+          newDrFiles = addNodeToTree(newDrFiles, selectedApplicationForSync.drPath, pFile);
+          newPrimaryFiles = updateStatusInTreeRecursive(newPrimaryFiles, pFile.relativePath, 'synced');
         }
         break;
       case 'dr_only':
-        if (dFile) {
-          newDrFiles = removeNodeFromTree(drFiles, dFile.relativePath);
-          // No change to primary tree as the file wasn't there.
+        if (dFile) { // File only on DR, remove it from DR
+          newDrFiles = removeNodeFromTree(newDrFiles, dFile.relativePath);
+          // No change to primary tree, its status relative to this path remains 'dr_only' effectively or 'synced' if it wasn't there
         }
         break;
       case 'different':
-        if (pFile) {
-          newDrFiles = updateNodeInTree(drFiles, fileDiff.path, pFile);
-          newPrimaryFiles = updateStatusInPrimaryTree(primaryFiles, pFile.relativePath, 'synced');
+        if (pFile) { // Primary file is source of truth
+          newDrFiles = updateNodeInTree(newDrFiles, fileDiff.path, pFile);
+          newPrimaryFiles = updateStatusInTreeRecursive(newPrimaryFiles, pFile.relativePath, 'synced');
         }
         break;
       default: 
         addLogEntry(`No sync action needed for ${fileDiff.path} (status: ${fileDiff.status})`, 'info');
-        return; 
+        return { newPrimaryFiles, newDrFiles }; // Return original trees if no action
     }
     
-    setPrimaryFiles(newPrimaryFiles);
-    setDrFiles(newDrFiles);
-    
-    const { differences: newDifferences } = compareFileTrees(primaryPath, drPath, newPrimaryFiles, newDrFiles);
-    setDifferences(newDifferences);
-
-    if (selectedDifference?.path === fileDiff.path) {
-      const updatedDiff = newDifferences.find(d => d.path === fileDiff.path);
-      if (updatedDiff) {
-          setSelectedDifference(updatedDiff);
-      } else { 
-          setSelectedDifference(prev => prev ? {...prev, status: 'synced', summary: "Successfully synced Primary to DR." } : null);
-      }
+    // After a sync action, the DR file that was modified/added should now be 'synced'
+    // And the primary file corresponding to it should also be marked 'synced'
+    if (pFile) {
+      newDrFiles = updateStatusInTreeRecursive(newDrFiles, pFile.relativePath, 'synced');
     }
+    // If it was dr_only and removed, its entry is gone from drFiles. 
+    // Primary remains as is.
     
-    addLogEntry(`Successfully synced ${fileDiff.path} (Primary to DR) for ${selectedApplicationForSync.name}`, 'success');
-    toast({ title: "Sync Complete", description: `${fileDiff.name} synced to DR.` });
+    return { newPrimaryFiles, newDrFiles };
   };
   
   const handleSyncFile = useCallback(async (fileDiff: FileDifference) => {
     setIsSyncingFile(true);
-    await simulateSync(fileDiff);
+    const { newPrimaryFiles, newDrFiles } = await simulateSync(fileDiff);
+    
+    // Re-compare to get accurate differences and update statuses globally
+    const { updatedPrimaryTree, updatedDrTree, differences: newDifferences } = compareFileTrees(primaryPath, drPath, newPrimaryFiles, newDrFiles);
+    setPrimaryFiles(updatedPrimaryTree);
+    setDrFiles(updatedDrTree);
+    setDifferences(newDifferences);
+
+    // Update selectedDifference based on the new state of differences
+    const updatedSelectedDiff = newDifferences.find(d => d.path === fileDiff.path);
+    if (updatedSelectedDiff) {
+        setSelectedDifference(updatedSelectedDiff);
+    } else { // If not found in new diffs, it means it's synced
+        const syncedPFile = findNodeByPathRecursive(updatedPrimaryTree, `${primaryPath}/${fileDiff.path}`.replace(/\/\//g, '/'));
+        const syncedDFile = findNodeByPathRecursive(updatedDrTree, `${drPath}/${fileDiff.path}`.replace(/\/\//g, '/'));
+        setSelectedDifference({
+            path: fileDiff.path,
+            name: fileDiff.name,
+            status: 'synced',
+            primaryFile: syncedPFile,
+            drFile: syncedDFile,
+            summary: "Successfully synced Primary to DR."
+        });
+    }
+    
+    addLogEntry(`Successfully synced ${fileDiff.path} (Primary to DR) for ${selectedApplicationForSync!.name}`, 'success');
+    toast({ title: "Sync Complete", description: `${fileDiff.name} processed for sync to DR.` });
     setIsSyncingFile(false);
-  }, [selectedDifference, toast, primaryFiles, drFiles, primaryPath, drPath, selectedApplicationForSync, simulateSync]);
+  }, [primaryFiles, drFiles, primaryPath, drPath, selectedApplicationForSync, toast, simulateSync]);
+
 
   const handleSyncAllDifferent = useCallback(async () => {
     if (!selectedApplicationForSync) return;
     setIsSyncingAll(true);
     addLogEntry(`Starting sync for all differing items (Primary to DR) for ${selectedApplicationForSync.name}...`, 'info');
     
+    let currentPrimary = JSON.parse(JSON.stringify(primaryFiles));
+    let currentDr = JSON.parse(JSON.stringify(drFiles));
+    
     const diffsToProcess = differences.filter(d => d.status === 'different' || d.status === 'primary_only' || d.status === 'dr_only');
 
     for (const diff of diffsToProcess) {
-      await simulateSync(diff); 
-      await new Promise(resolve => setTimeout(resolve, 200)); 
+      const { newPrimaryFiles, newDrFiles } = await simulateSync(diff);
+      currentPrimary = newPrimaryFiles; // Update for next iteration
+      currentDr = newDrFiles;     // Update for next iteration
+      await new Promise(resolve => setTimeout(resolve, 100)); // Small delay between syncs
     }
     
-    const { updatedPrimaryTree, updatedDrTree, differences: finalDifferences } = compareFileTrees(primaryPath, drPath, primaryFiles, drFiles); // Use latest state from primaryFiles, drFiles
+    // Final comparison based on all accumulated changes
+    const { updatedPrimaryTree, updatedDrTree, differences: finalDifferences } = compareFileTrees(primaryPath, drPath, currentPrimary, currentDr);
     setPrimaryFiles(updatedPrimaryTree);
     setDrFiles(updatedDrTree);
     setDifferences(finalDifferences);
+
+    setSelectedDifference(null); // Clear selection after full sync
 
     addLogEntry(`Sync all operation completed for ${selectedApplicationForSync.name}. ${diffsToProcess.length} items processed.`, 'success');
     toast({ title: "Sync All Complete", description: `${diffsToProcess.length} items processed for ${selectedApplicationForSync.name}.` });
@@ -396,7 +508,6 @@ export default function FileSyncPage() {
   const selectedFilePathForExplorer = useMemo(() => {
     if (selectedDifference?.primaryFile) return selectedDifference.primaryFile.path;
     if (selectedDifference?.drFile) return selectedDifference.drFile.path;
-    // If only relative path is available (e.g. for a synced directory not in diffs)
     if (selectedDifference?.path && selectedApplicationForSync) {
         const pNode = findNodeByPathRecursive(primaryFiles, `${selectedApplicationForSync.primaryPath}/${selectedDifference.path}`.replace(/\/\//g, '/'));
         if (pNode) return pNode.path;
@@ -427,8 +538,12 @@ export default function FileSyncPage() {
           {currentStage === ConfigStage.SERVER_INPUT && (
             <ServerInputForm 
               onSubmit={handleServerInputSubmit} 
-              onFileUpload={handleFileUpload} 
-              key="server-input-form" // Add key to force re-mount if needed
+              onFileUpload={handleFileUploadAndSave}
+              availableServerConfigs={availableServerConfigs}
+              onLoadConfigFromServer={handleLoadConfigFromServer}
+              isServerConfigListLoading={isServerConfigListLoading}
+              isServerConfigLoading={isServerConfigLoading}
+              key={`server-input-${availableServerConfigs.join('-')}`}
             />
           )}
 
@@ -438,7 +553,7 @@ export default function FileSyncPage() {
               initialPrimaryServers={assignedPrimaryServers} 
               initialDrServers={assignedDrServers}     
               onAssignmentComplete={handleServerAssignmentComplete}
-              key={`server-assignment-${availableServersForAssignment.length}-${assignedPrimaryServers.length}-${assignedDrServers.length}`} // More specific key
+              key={`server-assignment-${availableServersForAssignment.map(s=>s.id).join('-')}-${assignedPrimaryServers.length}-${assignedDrServers.length}`}
             />
           )}
 
@@ -449,8 +564,9 @@ export default function FileSyncPage() {
               existingApplications={applications}
               onAddApplication={handleAddApplication}
               onStartSync={handleStartFileSync}
-              onDownloadConfiguration={handleDownloadConfiguration}
-              key={`app-config-${applications.length}`} // Key based on application count
+              onSaveConfiguration={handleSaveConfigurationToServer}
+              isSavingConfiguration={isSavingConfiguration}
+              key={`app-config-${applications.length}-${assignedPrimaryServers.length}-${assignedDrServers.length}`}
             />
           )}
           
@@ -503,7 +619,7 @@ export default function FileSyncPage() {
                   onSyncAllDifferent={handleSyncAllDifferent} 
                   onViewLogs={() => setIsSyncLogOpen(true)}
                   isSyncingAll={isSyncingAll}
-                  canSync={!isGlobalLoading && differences.length > 0}
+                  canSync={!isGlobalLoading && differences.filter(d => d.status !== 'synced').length > 0}
                 />
               )}
             </>
@@ -518,5 +634,3 @@ export default function FileSyncPage() {
     </div>
   );
 }
-
-    
