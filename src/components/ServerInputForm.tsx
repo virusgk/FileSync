@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
-import { ListPlus, Upload, DatabaseZap, Loader2, Trash2, Download } from 'lucide-react';
+import { ListPlus, Upload, DatabaseZap, Loader2, Trash2, Download, Pencil } from 'lucide-react';
 import {
   Table,
   TableBody,
@@ -35,9 +35,11 @@ interface ServerInputFormProps {
   availableServerConfigs: string[]; // filenames without .json
   onLoadConfigFromServer: (filename: string) => void;
   onDeleteConfigFromServer: (filename: string) => Promise<void>;
+  onRenameConfigFromServer: (oldFilename: string, newFilename: string) => Promise<void>;
   isServerConfigListLoading: boolean;
   isServerConfigLoading: boolean;
   isDeletingConfig: boolean;
+  isRenamingConfig: boolean;
 }
 
 const ServerInputForm: React.FC<ServerInputFormProps> = ({
@@ -46,14 +48,17 @@ const ServerInputForm: React.FC<ServerInputFormProps> = ({
   availableServerConfigs,
   onLoadConfigFromServer,
   onDeleteConfigFromServer,
+  onRenameConfigFromServer,
   isServerConfigListLoading,
   isServerConfigLoading,
   isDeletingConfig,
+  isRenamingConfig,
 }) => {
   const [primaryServerNames, setPrimaryServerNames] = useState<string>('');
   const [drServerNames, setDrServerNames] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [configToDelete, setConfigToDelete] = useState<string | null>(null);
+  const [configToRename, setConfigToRename] = useState<{ oldName: string; newName: string } | null>(null);
   const { toast } = useToast();
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -96,27 +101,54 @@ const ServerInputForm: React.FC<ServerInputFormProps> = ({
     }
   };
 
+  const handleRenameRequest = (filename: string) => {
+    setConfigToRename({ oldName: filename, newName: filename });
+  };
+
+  const confirmRename = async () => {
+    if (configToRename && configToRename.newName.trim()) {
+      // Basic validation for new name (e.g., no slashes, dots, etc.)
+      if (/[^a-zA-Z0-9_.-]/.test(configToRename.newName.trim()) || configToRename.newName.includes('..')) {
+        toast({
+          title: "Invalid Name",
+          description: "New configuration name can only contain alphanumeric characters, underscores, hyphens, or periods and cannot contain '..'.",
+          variant: "destructive",
+        });
+        return;
+      }
+      await onRenameConfigFromServer(configToRename.oldName, configToRename.newName.trim());
+      setConfigToRename(null);
+    } else {
+      toast({
+        title: "Invalid Name",
+        description: "New configuration name cannot be empty.",
+        variant: "destructive",
+      });
+    }
+  };
+
+
   return (
     <Card className="shadow-lg">
       <CardHeader>
         <div className="flex items-center gap-2">
-            <ListPlus className="h-8 w-8 text-primary" />
+            <DatabaseZap className="h-8 w-8 text-primary" />
             <CardTitle className="font-headline text-2xl">Step 1: System Configuration</CardTitle>
         </div>
         <CardDescription>
-          Load an existing system configuration from the server, upload a local configuration file, or manually enter server names to start a new configuration.
+          Manage saved system configurations, upload a local file, or manually enter server names to start a new setup.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-8">
         <div>
-            <Label className="block text-lg font-medium text-foreground mb-2">Manage Saved Configurations</Label>
+            <Label className="block text-lg font-medium text-foreground mb-2">Saved Configurations</Label>
             {isServerConfigListLoading ? (
                 <div className="flex items-center space-x-2 text-muted-foreground">
                     <Loader2 className="h-5 w-5 animate-spin" />
                     <span>Loading configurations...</span>
                 </div>
             ) : availableServerConfigs.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-4">No configurations found on server. You can start by manually entering servers or uploading a file.</p>
+                <p className="text-sm text-muted-foreground text-center py-4">No configurations found on server.</p>
             ) : (
                 <Card>
                     <Table>
@@ -130,24 +162,36 @@ const ServerInputForm: React.FC<ServerInputFormProps> = ({
                         {availableServerConfigs.map(configName => (
                             <TableRow key={configName}>
                             <TableCell className="font-medium">{configName}</TableCell>
-                            <TableCell className="text-right space-x-2">
-                                <Button 
-                                    onClick={() => onLoadConfigFromServer(configName)} 
-                                    variant="outline" 
+                            <TableCell className="text-right space-x-1">
+                                <Button
+                                    onClick={() => onLoadConfigFromServer(configName)}
+                                    variant="outline"
                                     size="sm"
-                                    disabled={isServerConfigLoading || isDeletingConfig}
+                                    disabled={isServerConfigLoading || isDeletingConfig || isRenamingConfig}
+                                    title="Load Configuration"
                                 >
-                                {isServerConfigLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-                                <span className="ml-2">Load</span>
+                                {isServerConfigLoading && configName === (configToRename?.oldName || configToDelete) ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                                <span className="ml-2 hidden sm:inline">Load</span>
                                 </Button>
-                                <Button 
-                                    onClick={() => handleDeleteRequest(configName)} 
-                                    variant="destructive" 
+                                <Button
+                                    onClick={() => handleRenameRequest(configName)}
+                                    variant="outline"
                                     size="sm"
-                                    disabled={isServerConfigLoading || isDeletingConfig}
+                                    disabled={isServerConfigLoading || isDeletingConfig || isRenamingConfig}
+                                    title="Rename Configuration"
                                 >
-                                {isDeletingConfig && configToDelete === configName ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                                <span className="ml-2">Delete</span>
+                                  <Pencil className="h-4 w-4" />
+                                  <span className="ml-2 hidden sm:inline">Rename</span>
+                                </Button>
+                                <Button
+                                    onClick={() => handleDeleteRequest(configName)}
+                                    variant="destructive"
+                                    size="sm"
+                                    disabled={isServerConfigLoading || isDeletingConfig || isRenamingConfig}
+                                    title="Delete Configuration"
+                                >
+                                {(isDeletingConfig && configToDelete === configName) ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                                <span className="ml-2 hidden sm:inline">Delete</span>
                                 </Button>
                             </TableCell>
                             </TableRow>
@@ -206,12 +250,12 @@ const ServerInputForm: React.FC<ServerInputFormProps> = ({
         <p className="text-sm text-muted-foreground">
           Upload a saved JSON configuration file. It will be saved to the server and then loaded into the application.
         </p>
-        <Input 
-            type="file" 
-            accept=".json" 
-            onChange={handleFileChange} 
-            className="hidden" 
-            ref={fileInputRef} 
+        <Input
+            type="file"
+            accept=".json"
+            onChange={handleFileChange}
+            className="hidden"
+            ref={fileInputRef}
         />
         <Button onClick={triggerFileDialog} variant="outline">
             <Upload className="mr-2 h-4 w-4" /> Upload & Save Configuration File
@@ -241,8 +285,39 @@ const ServerInputForm: React.FC<ServerInputFormProps> = ({
             </AlertDialogContent>
         </AlertDialog>
       )}
+
+      {configToRename && (
+        <AlertDialog open={!!configToRename} onOpenChange={(open) => !open && setConfigToRename(null)}>
+            <AlertDialogContent>
+                <AlertDialogHeader>
+                <AlertDialogTitle>Rename Configuration</AlertDialogTitle>
+                <AlertDialogDescription>
+                    Current name: <span className="font-semibold">{configToRename.oldName}</span>.
+                    Enter the new name for the configuration file (without .json extension).
+                </AlertDialogDescription>
+                </AlertDialogHeader>
+                <Input
+                    value={configToRename.newName}
+                    onChange={(e) => setConfigToRename({ ...configToRename, newName: e.target.value })}
+                    placeholder="New configuration name"
+                    className="my-2"
+                />
+                <AlertDialogFooter>
+                <AlertDialogCancel onClick={() => setConfigToRename(null)}>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                    onClick={confirmRename}
+                    disabled={isRenamingConfig || !configToRename.newName.trim()}
+                >
+                    {isRenamingConfig ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                    Rename
+                </AlertDialogAction>
+                </AlertDialogFooter>
+            </AlertDialogContent>
+        </AlertDialog>
+      )}
     </Card>
   );
 };
 
 export default ServerInputForm;
+    

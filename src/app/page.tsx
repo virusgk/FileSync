@@ -48,6 +48,7 @@ export default function FileSyncPage() {
   const [isServerConfigLoading, setIsServerConfigLoading] = useState<boolean>(false);
   const [isSavingConfiguration, setIsSavingConfiguration] = useState<boolean>(false);
   const [isDeletingConfig, setIsDeletingConfig] = useState<boolean>(false);
+  const [isRenamingConfig, setIsRenamingConfig] = useState<boolean>(false);
 
 
   // File Sync UI State
@@ -183,10 +184,11 @@ export default function FileSyncPage() {
             return;
         }
 
+        // Use POST to save it to the server
         const saveResponse = await fetch('/api/configurations', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(loadedConfig),
+            body: JSON.stringify(loadedConfig), // Send the full bundle
         });
 
         if (!saveResponse.ok) {
@@ -196,8 +198,8 @@ export default function FileSyncPage() {
         const saveResult = await saveResponse.json();
         toast({ title: "Upload Successful", description: `Configuration from file '${file.name}' saved as '${saveResult.filename}' on server and applied.` });
         
-        applyLoadedConfig(loadedConfig); 
-        await fetchAvailableConfigs(); 
+        applyLoadedConfig(loadedConfig); // Apply the loaded (and now saved) config
+        await fetchAvailableConfigs(); // Refresh the list of configs from server
 
       } catch (error) {
         console.error("Error processing uploaded configuration:", error);
@@ -227,6 +229,28 @@ export default function FileSyncPage() {
     }
   };
 
+  const handleRenameConfigFromServer = async (oldFilename: string, newFilename: string) => {
+    setIsRenamingConfig(true);
+    try {
+      const response = await fetch(`/api/configurations/${oldFilename}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ newName: newFilename }),
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result.error || `Failed to rename configuration '${oldFilename}'`);
+      }
+      toast({ title: "Configuration Renamed", description: result.message });
+      await fetchAvailableConfigs(); // Refresh the list
+    } catch (error) {
+      console.error(`Error renaming configuration ${oldFilename} from server:`, error);
+      toast({ title: "Rename Error", description: (error as Error).message, variant: "destructive" });
+    } finally {
+      setIsRenamingConfig(false);
+    }
+  };
+
 
   // Stage 1 Handlers
   const handleServerInputSubmit = (primaryNames: string[], drNames: string[]) => {
@@ -243,9 +267,9 @@ export default function FileSyncPage() {
     setRawPrimaryServers(newRawPrimary);
     setRawDrServers(newRawDr);
     setAvailableServersForAssignment([...newRawPrimary, ...newRawDr]);
-    setAssignedPrimaryServers([]); 
-    setAssignedDrServers([]);     
-    setApplications([]);          
+    setAssignedPrimaryServers([]); // Reset assigned servers
+    setAssignedDrServers([]);     // Reset assigned servers
+    setApplications([]);          // Reset applications
     setSelectedApplicationForSync(null);
     setCurrentStage(ConfigStage.SERVER_ASSIGNMENT);
     toast({ title: "Servers Entered", description: "Proceed to assign servers." });
@@ -270,6 +294,7 @@ export default function FileSyncPage() {
     setPrimaryPath(app.primaryPath);
     setDrPath(app.drPath);
     setCurrentStage(ConfigStage.FILE_SYNC);
+    // Reset file sync specific states
     setPrimaryFiles([]);
     setDrFiles([]);
     setDifferences([]);
@@ -313,6 +338,7 @@ export default function FileSyncPage() {
     setAiSuggestion(null);
     addLogEntry(`Loading files from Primary: ${primaryPath} and DR: ${drPath} for app: ${selectedApplicationForSync.name}`, 'info');
     
+    // Simulate network delay for loading files
     await new Promise(resolve => setTimeout(resolve, 1000)); 
 
     const mockPrimary = generateMockFiles(primaryPath, 'primary');
@@ -366,6 +392,7 @@ export default function FileSyncPage() {
       setSelectedDifference(diff);
       setAiSuggestion(null);
     } else {
+      // If no direct diff, it might be a synced file or a directory
       const pFile = findNodeByPathRecursive(primaryFiles, node.path);
       const drFilePath = selectedApplicationForSync && pFile ? pFile.path.replace(selectedApplicationForSync.primaryPath, selectedApplicationForSync.drPath) : '';
       const dFile = drFilePath ? findNodeByPathRecursive(drFiles, drFilePath) : undefined;
@@ -374,13 +401,14 @@ export default function FileSyncPage() {
          setSelectedDifference({
            path: node.relativePath,
            name: node.name,
-           status: 'synced', 
+           status: 'synced', // Treat as synced if no diff and files exist, or if it's a directory
            primaryFile: pFile,
            drFile: dFile,
            summary: node.type === 'file' ? "Files are in sync." : "Directory view."
          });
       } else {
-        setSelectedDifference(null); 
+        // Could be a scenario not covered, or user clicked a file not part of a diff (e.g. parent dir)
+        setSelectedDifference(null); // Or a more informative default state
       }
     }
   }, [differences, primaryFiles, drFiles, selectedApplicationForSync]);
@@ -411,7 +439,7 @@ export default function FileSyncPage() {
   const simulateSync = async (fileDiff: FileDifference) => {
     if (!selectedApplicationForSync) return { newPrimaryFiles: primaryFiles, newDrFiles: drFiles };
     addLogEntry(`Syncing ${fileDiff.path} (Primary to DR) for ${selectedApplicationForSync.name}...`, 'info');
-    await new Promise(resolve => setTimeout(resolve, 500)); 
+    await new Promise(resolve => setTimeout(resolve, 500)); // Simulate network delay
 
     let newPrimaryFiles = JSON.parse(JSON.stringify(primaryFiles)) as FileNode[];
     let newDrFiles = JSON.parse(JSON.stringify(drFiles)) as FileNode[];
@@ -429,26 +457,33 @@ export default function FileSyncPage() {
     switch (fileDiff.status) {
       case 'primary_only':
         if (pFile) {
+          // Add primary file/dir to DR tree
           newDrFiles = addNodeToTree(newDrFiles, selectedApplicationForSync.drPath, pFile);
+          // Mark primary file/dir as synced
           newPrimaryFiles = updateStatusInTreeRecursive(newPrimaryFiles, pFile.relativePath, 'synced');
         }
         break;
       case 'dr_only':
         if (dFile) { 
+          // Remove dr_only file/dir from DR tree
           newDrFiles = removeNodeFromTree(newDrFiles, dFile.relativePath);
+          // No change to primary tree for dr_only
         }
         break;
       case 'different':
-        if (pFile) { 
+        if (pFile) { // Primary is source of truth
+          // Update DR file/dir with primary's content/metadata
           newDrFiles = updateNodeInTree(newDrFiles, fileDiff.path, pFile);
+          // Mark primary file/dir as synced
           newPrimaryFiles = updateStatusInTreeRecursive(newPrimaryFiles, pFile.relativePath, 'synced');
         }
         break;
       default: 
         addLogEntry(`No sync action needed for ${fileDiff.path} (status: ${fileDiff.status})`, 'info');
-        return { newPrimaryFiles, newDrFiles }; 
+        return { newPrimaryFiles, newDrFiles }; // No changes if already synced
     }
     
+    // After action, if the primary file was involved, its corresponding DR path should also be marked synced
     if (pFile) {
       newDrFiles = updateStatusInTreeRecursive(newDrFiles, pFile.relativePath, 'synced');
     }
@@ -460,15 +495,17 @@ export default function FileSyncPage() {
     setIsSyncingFile(true);
     const { newPrimaryFiles, newDrFiles } = await simulateSync(fileDiff);
     
+    // Re-compare trees to get updated differences and statuses
     const { updatedPrimaryTree, updatedDrTree, differences: newDifferences } = compareFileTrees(primaryPath, drPath, newPrimaryFiles, newDrFiles);
     setPrimaryFiles(updatedPrimaryTree);
     setDrFiles(updatedDrTree);
     setDifferences(newDifferences);
 
+    // Update selected difference view
     const updatedSelectedDiff = newDifferences.find(d => d.path === fileDiff.path);
     if (updatedSelectedDiff) {
         setSelectedDifference(updatedSelectedDiff);
-    } else { 
+    } else { // If not found, it means it's synced and no longer a "difference"
         const syncedPFile = findNodeByPathRecursive(updatedPrimaryTree, `${primaryPath}/${fileDiff.path}`.replace(/\/\//g, '/'));
         const syncedDFile = findNodeByPathRecursive(updatedDrTree, `${drPath}/${fileDiff.path}`.replace(/\/\//g, '/'));
         setSelectedDifference({
@@ -495,13 +532,14 @@ export default function FileSyncPage() {
     let currentPrimary = JSON.parse(JSON.stringify(primaryFiles));
     let currentDr = JSON.parse(JSON.stringify(drFiles));
     
+    // Get all differences that require action (Primary to DR)
     const diffsToProcess = differences.filter(d => d.status === 'different' || d.status === 'primary_only' || d.status === 'dr_only');
 
     for (const diff of diffsToProcess) {
-      const { newPrimaryFiles, newDrFiles } = await simulateSync(diff);
-      currentPrimary = newPrimaryFiles; 
-      currentDr = newDrFiles;     
-      await new Promise(resolve => setTimeout(resolve, 100)); 
+      const { newPrimaryFiles, newDrFiles } = await simulateSync(diff); // simulateSync handles one-way logic
+      currentPrimary = newPrimaryFiles; // Primary tree might get status updates
+      currentDr = newDrFiles;     // DR tree gets content/structure updates
+      await new Promise(resolve => setTimeout(resolve, 100)); // Small delay between operations
     }
     
     const { updatedPrimaryTree, updatedDrTree, differences: finalDifferences } = compareFileTrees(primaryPath, drPath, currentPrimary, currentDr);
@@ -509,7 +547,7 @@ export default function FileSyncPage() {
     setDrFiles(updatedDrTree);
     setDifferences(finalDifferences);
 
-    setSelectedDifference(null); 
+    setSelectedDifference(null); // Clear selection as batch operation completed
 
     addLogEntry(`Sync all operation completed for ${selectedApplicationForSync.name}. ${diffsToProcess.length} items processed.`, 'success');
     toast({ title: "Sync All Complete", description: `${diffsToProcess.length} items processed for ${selectedApplicationForSync.name}.` });
@@ -519,6 +557,8 @@ export default function FileSyncPage() {
   const selectedFilePathForExplorer = useMemo(() => {
     if (selectedDifference?.primaryFile) return selectedDifference.primaryFile.path;
     if (selectedDifference?.drFile) return selectedDifference.drFile.path;
+    // If a difference is selected but files aren't directly on it (e.g. directory diff)
+    // try to construct the path based on selectedDifference.path
     if (selectedDifference?.path && selectedApplicationForSync) {
         const pNode = findNodeByPathRecursive(primaryFiles, `${selectedApplicationForSync.primaryPath}/${selectedDifference.path}`.replace(/\/\//g, '/'));
         if (pNode) return pNode.path;
@@ -553,9 +593,11 @@ export default function FileSyncPage() {
               availableServerConfigs={availableServerConfigs}
               onLoadConfigFromServer={handleLoadConfigFromServer}
               onDeleteConfigFromServer={handleDeleteConfigFromServer}
+              onRenameConfigFromServer={handleRenameConfigFromServer}
               isServerConfigListLoading={isServerConfigListLoading}
               isServerConfigLoading={isServerConfigLoading}
               isDeletingConfig={isDeletingConfig}
+              isRenamingConfig={isRenamingConfig}
               key={`server-input-${availableServerConfigs.join('-')}`} 
             />
           )}
@@ -598,6 +640,7 @@ export default function FileSyncPage() {
                 </CardContent>
               </Card>
 
+              {/* Only show file explorers and details if not initial global loading */}
               { (primaryFiles.length > 0 || drFiles.length > 0 || isGlobalLoading) && (
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
                   <FileExplorer
@@ -627,6 +670,7 @@ export default function FileSyncPage() {
                 </div>
               )}
               
+              {/* Sync controls should be visible if there are differences and not globally loading */}
               {differences.length > 0 && !isGlobalLoading && (
                 <SyncControls
                   onSyncAllDifferent={handleSyncAllDifferent} 
@@ -647,3 +691,4 @@ export default function FileSyncPage() {
     </div>
   );
 }
+    
